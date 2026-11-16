@@ -1,7 +1,8 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" translate="no">
 <head>
 <meta charset="UTF-8">
+<meta name="google" content="notranslate">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Hércules Barber — Agendamento Online</title>
 <link rel="icon" href="icon-192.png">
@@ -15,7 +16,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root{
-  --gold:#d4af37; --gold-light:#f0d878; --gold-dark:#9a7b1f;
+  --gold:#5aa9e6; --gold-light:#a8d4f7; --gold-dark:#2f6fa8;
   --black:#0a0a0a; --dark:#111; --dark2:#1a1a1a; --line:#2a2a2a;
   --text:#eee; --muted:#999;
 }
@@ -27,10 +28,10 @@ img{max-width:100%}
 a{color:var(--gold);text-decoration:none}
 .container{max-width:1100px;margin:0 auto;padding:0 20px}
 .btn{display:inline-block;padding:14px 32px;border-radius:6px;font-weight:600;font-size:15px;cursor:pointer;border:none;transition:.25s;letter-spacing:.5px}
-.btn-gold{background:linear-gradient(135deg,var(--gold-light),var(--gold),var(--gold-dark));color:#111;box-shadow:0 4px 20px rgba(212,175,55,.35)}
-.btn-gold:hover{transform:translateY(-2px);box-shadow:0 8px 28px rgba(212,175,55,.5)}
+.btn-gold{background:linear-gradient(135deg,var(--gold-light),var(--gold),var(--gold-dark));color:#111;box-shadow:0 4px 20px rgba(90,169,230,.35)}
+.btn-gold:hover{transform:translateY(-2px);box-shadow:0 8px 28px rgba(90,169,230,.5)}
 .btn-outline{background:transparent;color:var(--gold);border:1px solid var(--gold)}
-.btn-outline:hover{background:rgba(212,175,55,.1)}
+.btn-outline:hover{background:rgba(90,169,230,.1)}
 .btn-danger{background:transparent;color:#e05c5c;border:1px solid #e05c5c;font-size:13px;padding:7px 14px}
 .btn-danger:hover{background:rgba(224,92,92,.12)}
 .gold-text{background:linear-gradient(135deg,var(--gold-light),var(--gold),var(--gold-dark));-webkit-background-clip:text;background-clip:text;color:transparent}
@@ -46,8 +47,8 @@ header{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(10,10,10,
 .nav-links a:hover{color:var(--gold)}
 .hamb{display:none;background:none;border:none;color:var(--gold);font-size:26px;cursor:pointer}
 /* HERO */
-.hero{min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;background:radial-gradient(ellipse at 50% 30%,#1c1a12 0%,var(--black) 65%);padding:120px 20px 60px}
-.hero-logo{width:min(420px,80vw);border-radius:12px;box-shadow:0 20px 60px rgba(212,175,55,.18);margin-bottom:36px}
+.hero{min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;background:radial-gradient(ellipse at 50% 30%,#121a26 0%,var(--black) 65%);padding:120px 20px 60px}
+.hero-logo{width:min(420px,80vw);border-radius:12px;box-shadow:0 20px 60px rgba(90,169,230,.18);margin-bottom:36px}
 .hero h1{font-size:clamp(34px,5.5vw,58px);font-weight:900;letter-spacing:1px}
 .hero p{color:var(--muted);max-width:560px;margin:18px auto 36px;font-size:17px}
 /* SERVICES */
@@ -70,7 +71,7 @@ input:focus,select:focus{outline:none;border-color:var(--gold)}
 .slot.off{opacity:.28;cursor:not-allowed;text-decoration:line-through}
 .slot.off:hover{border-color:var(--line)}
 .slot-empty{color:var(--muted);font-size:14px;padding:8px 0}
-.slot.rec{border:1px dashed rgba(212,175,55,.5);color:var(--gold)} /* ⭐ apenas indica recomendado — NÃO parece selecionado */
+.slot.rec{border:1px dashed rgba(90,169,230,.5);color:var(--gold)} /* ⭐ apenas indica recomendado — NÃO parece selecionado */
 .slot-rec-hint{color:var(--gold-light);font-size:13px;margin-top:12px;font-weight:600;grid-column:1 / -1}
 /* CONFIRM */
 .confirm-box{text-align:center;padding:20px}
@@ -83,7 +84,7 @@ input:focus,select:focus{outline:none;border-color:var(--gold)}
 footer{border-top:1px solid var(--line);padding:40px 0;text-align:center;color:var(--muted);font-size:14px}
 .socials{display:flex;gap:16px;justify-content:center;margin:14px 0}
 .socials a{width:42px;height:42px;border:1px solid var(--line);border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--gold);transition:.2s}
-.socials a:hover{border-color:var(--gold);background:rgba(212,175,55,.08)}
+.socials a:hover{border-color:var(--gold);background:rgba(90,169,230,.08)}
 .socials svg{width:19px;height:19px;fill:currentColor}
 /* ADMIN */
 .admin-login{max-width:400px;margin:0 auto;background:var(--dark2);border:1px solid var(--line);border-radius:14px;padding:36px}
@@ -93,7 +94,7 @@ footer{border-top:1px solid var(--line);padding:40px 0;text-align:center;color:v
 table{width:100%;border-collapse:collapse;font-size:14px}
 th{text-align:left;color:var(--gold);padding:10px;border-bottom:1px solid var(--line);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
 td{padding:10px;border-bottom:1px solid #1e1e1e}
-.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600;background:rgba(212,175,55,.15);color:var(--gold);border:1px solid rgba(212,175,55,.35)}
+.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600;background:rgba(90,169,230,.15);color:var(--gold);border:1px solid rgba(90,169,230,.35)}
 .row-flex{display:flex;gap:12px;flex-wrap:wrap}
 .row-flex>*{flex:1;min-width:140px}
 .day-check{display:flex;align-items:center;gap:8px;padding:8px 0;color:var(--text);font-size:14px}
@@ -101,7 +102,7 @@ td{padding:10px;border-bottom:1px solid #1e1e1e}
 .notice{padding:14px 18px;border-radius:8px;font-size:14px;margin-bottom:18px}
 .notice.ok{background:rgba(37,211,102,.1);border:1px solid rgba(37,211,102,.35);color:#7fe0a8}
 .notice.err{background:rgba(224,92,92,.1);border:1px solid rgba(224,92,92,.35);color:#e88}
-.notice.info{background:rgba(212,175,55,.08);border:1px solid rgba(212,175,55,.3);color:var(--gold-light)}
+.notice.info{background:rgba(90,169,230,.08);border:1px solid rgba(90,169,230,.3);color:var(--gold-light)}
 .hidden{display:none!important}
 /* RESPONSIVE */
 @media(max-width:820px){
@@ -518,14 +519,14 @@ function renderTabAg(){
   const recSem=(bookings||[]).filter(b=>b.date>=mSeg&&b.done).reduce((a,b)=>a+Number(b.price||0),0);
   const pendSem=(bookings||[]).filter(b=>b.date>=mSeg&&!b.done).reduce((a,b)=>a+Number(b.price||0),0);
   top='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px">'
-    +'<span class="badge" style="background:rgba(232,197,107,.12);border:1px solid var(--gold);color:var(--gold);padding:8px 14px;border-radius:999px;font-size:14px">📅 Semana — recebido: <b>R$ '+recSem.toFixed(2).replace('.',',')+'</b></span>'
+    +'<span class="badge" style="background:rgba(90,169,230,.12);border:1px solid var(--gold);color:var(--gold);padding:8px 14px;border-radius:999px;font-size:14px">📅 Semana — recebido: <b>R$ '+recSem.toFixed(2).replace('.',',')+'</b></span>'
     +(pendSem>0?'<span class="badge" style="background:rgba(255,255,255,.05);border:1px solid #444;color:var(--muted);padding:8px 14px;border-radius:999px;font-size:14px">⏳ A receber: R$ '+pendSem.toFixed(2).replace('.',',')+'</span>':'')
     +(lastWeekTotal!=null?'<span class="badge" style="background:rgba(255,255,255,.06);border:1px solid #444;color:var(--muted);padding:8px 14px;border-radius:999px;font-size:14px">📆 Semana passada: <b style="color:var(--gold)">R$ '+lastWeekTotal.toFixed(2).replace('.',',')+'</b></span>':'')
     +'</div>'+top;
   const rec={},pend={};
   sorted.forEach(b=>{const t=b.done?rec:pend;t[b.date]=(t[b.date]||0)+Number(b.price||0);});
   const totalHtml=d=>'<div style="display:flex;align-items:center;gap:8px;margin:-2px 0 10px;font-size:14px;flex-wrap:wrap">'
-    +'<span class="badge" style="background:rgba(232,197,107,.12);border:1px solid var(--gold);color:var(--gold);padding:6px 14px;border-radius:999px">💰 Recebido: <b>R$ '+(rec[d]||0).toFixed(2).replace('.',',')+'</b></span>'
+    +'<span class="badge" style="background:rgba(90,169,230,.12);border:1px solid var(--gold);color:var(--gold);padding:6px 14px;border-radius:999px">💰 Recebido: <b>R$ '+(rec[d]||0).toFixed(2).replace('.',',')+'</b></span>'
     +((pend[d]||0)>0?'<span class="badge" style="background:rgba(255,255,255,.05);border:1px solid #444;color:var(--muted);padding:6px 14px;border-radius:999px">⏳ A receber: R$ '+pend[d].toFixed(2).replace('.',',')+'</span>':'')
     +'</div>';
   let html=top,lastDate='';
@@ -773,7 +774,7 @@ function renderTabCfg(){
     +'<br><br><button class="btn btn-gold" onclick="saveCfg()">SALVAR CONFIGURAÇÕES</button><div id="cfgMsg"></div>'
     +'<hr style="border:none;border-top:1px solid #333;margin:24px 0 16px">'
     +'<label>Notificações de novo agendamento</label>'
-    +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0 4px"><button id="btnNotif" onclick="enableNotif()" style="background:rgba(232,197,107,.1);border:1px solid var(--gold);color:var(--gold);padding:10px 18px;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer">🔔 Ativar notificações</button></div>'
+    +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0 4px"><button id="btnNotif" onclick="enableNotif()" style="background:rgba(90,169,230,.1);border:1px solid var(--gold);color:var(--gold);padding:10px 18px;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer">🔔 Ativar notificações</button></div>'
     +'<small style="color:var(--muted)">Avisa neste aparelho quando um cliente agendar (Android/PC, com o painel aberto).</small>';
   updateNotifBtn();
 }
