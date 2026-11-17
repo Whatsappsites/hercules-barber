@@ -150,8 +150,9 @@ td{padding:10px;border-bottom:1px solid #2e2e2e}
 <section id="servicos">
   <div class="container">
     <h2 class="section-title">Nossos <span class="gold-text">Serviços</span></h2>
-    <p class="section-sub">Qualidade premium, preço justo.</p>
+    <p class="section-sub">Transformando clientes em amigos e estilo em identidade.</p>
     <div class="grid-services" id="servicesGrid"></div>
+    <div class="notice info" style="max-width:640px;margin:28px auto 0;text-align:center">⚠️ <b>Aviso!</b> Não trabalhamos com corte infantil.</div>
   </div>
 </section>
 
@@ -162,6 +163,7 @@ td{padding:10px;border-bottom:1px solid #2e2e2e}
     <p class="section-sub">Escolha o serviço, a data e o horário. Sem ligações, sem espera.</p>
 
     <div class="booking-wrap" id="bookingForm">
+      <div class="notice info" style="margin:0 0 4px;text-align:center">⚠️ <b>Aviso!</b> Não trabalhamos com corte infantil.</div>
       <label>Serviço</label>
       <select id="bkService"></select>
       <label>Data</label>
@@ -198,6 +200,8 @@ td{padding:10px;border-bottom:1px solid #2e2e2e}
       <a id="footIg" target="_blank" rel="noopener" title="Instagram"><svg viewBox="0 0 24 24"><path d="M12 2.2c3.2 0 3.6 0 4.8.1 1.2.1 1.8.2 2.2.4.6.2 1 .5 1.4.9.4.4.7.8.9 1.4.2.4.4 1 .4 2.2.1 1.2.1 1.6.1 4.8s0 3.6-.1 4.8c-.1 1.2-.2 1.8-.4 2.2-.2.6-.5 1-.9 1.4-.4.4-.8.7-1.4.9-.4.2-1 .4-2.2.4-1.2.1-1.6.1-4.8.1s-3.6 0-4.8-.1c-1.2-.1-1.8-.2-2.2-.4-.6-.2-1-.5-1.4-.9-.4-.4-.7-.8-.9-1.4-.2-.4-.4-1-.4-2.2-.1-1.2-.1-1.6-.1-4.8s0-3.6.1-4.8c.1-1.2.2-1.8.4-2.2.2-.6.5-1 .9-1.4.4-.4.8-.7 1.4-.9.4-.2 1-.4 2.2-.4 1.2-.1 1.6-.1 4.8-.1zm0 2.7c-3.1 0-3.5 0-4.7.1-1.1.1-1.5.2-1.9.3-.5.2-.8.4-1.1.7-.3.3-.5.6-.7 1.1-.1.4-.3.8-.3 1.9-.1 1.2-.1 1.6-.1 4.7s0 3.5.1 4.7c.1 1.1.2 1.5.3 1.9.2.5.4.8.7 1.1.3.3.6.5 1.1.7.4.1.8.3 1.9.3 1.2.1 1.6.1 4.7.1s3.5 0 4.7-.1c1.1-.1 1.5-.2 1.9-.3.5-.2.8-.4 1.1-.7.3-.3.5-.6.7-1.1.1-.4.3-.8.3-1.9.1-1.2.1-1.6.1-4.7s0-3.5-.1-4.7c-.1-1.1-.2-1.5-.3-1.9-.2-.5-.4-.8-.7-1.1-.3-.3-.6-.5-1.1-.7-.4-.1-.8-.3-1.9-.3-1.2-.1-1.6-.1-4.7-.1zm0 3.5a5.1 5.1 0 110 10.2 5.1 5.1 0 010-10.2zm0 2.7a2.4 2.4 0 100 4.8 2.4 2.4 0 000-4.8zm5.3-2.6a1.2 1.2 0 11-2.4 0 1.2 1.2 0 012.4 0z"/></svg></a>
     </div>
     <p id="footHours"></p>
+    <p id="footAddr" style="margin-top:10px;display:none"></p>
+    <a id="footMap" class="btn btn-outline" style="margin-top:14px;padding:10px 22px;font-size:14px" target="_blank" rel="noopener">📍 Como chegar</a>
     <p style="margin-top:18px">© 2026 Hércules Barber — Todos os direitos reservados.</p>
   </div>
 </footer>
@@ -247,6 +251,7 @@ window.addEventListener('error',function(e){
 </script><script>
 /* ============ FIREBASE (banco de dados compartilhado) ============ */
 const DB='https://hercules-barber-default-rtdb.firebaseio.com';
+const MAPS_DEFAULT='https://maps.app.goo.gl/isfQtbfU3AXQ42oN8';
 async function dbGet(path){
   /* erro de rede => undefined | banco vazio => null (nunca confundir os dois) */
   try{
@@ -312,15 +317,16 @@ async function boot(){
   if(data){
     if(data.cfg)cfg=data.cfg;
     if(Array.isArray(data.services)&&data.services.length)services=data.services;
-    if(Array.isArray(data.bookings))bookings=data.bookings.filter(Boolean);
+    if(data.bookings&&typeof data.bookings==='object')bookings=(Array.isArray(data.bookings)?data.bookings:Object.values(data.bookings)).filter(Boolean);
   }
   /* grava padrões caso o banco esteja vazio */
   const patch={};
   if(!data||!data.cfg)patch.cfg=cfg;
   if(!data||!Array.isArray(data.services)||!data.services.length)patch.services=services;
-  if(!data||!Array.isArray(data.bookings))patch.bookings=bookings;
+  if(!data||data.bookings==null)patch.bookings=[]; /* só cria se o nó NÃO existir */
   if(Object.keys(patch).length)await dbPatch(patch);
   renderPublic();renderSlots();
+  ensureDailyBackup();
 }
 
 /* ============ PUBLIC RENDER ============ */
@@ -337,6 +343,9 @@ function renderPublic(){
   document.getElementById('floatWa').href=wa;
   document.getElementById('footWa').href=wa;
   document.getElementById('footIg').href=cfg.instagram||'#';
+  const ad=String(cfg.address||'').trim(),fa=document.getElementById('footAddr');
+  fa.innerHTML=ad?'📍 '+esc(ad):'';fa.style.display=ad?'block':'none';
+  document.getElementById('footMap').href=cfg.maps||MAPS_DEFAULT;
   const wd=cfg.days.map((v,i)=>v?DAYS[i].slice(0,3):null).filter(Boolean).join(', ');
   document.getElementById('footHours').innerHTML='Funcionamento: <b style="color:var(--gold)">'+wd+'</b> · '+cfg.start+' às '+cfg.end;
 }
@@ -755,13 +764,22 @@ function renderTabCfg(){
     +'<input id="cfgWa" placeholder="Ex: 11987654321" value="'+esc(cfg.whatsapp)+'">'
     +'<label>Link do Instagram (opcional)</label>'
     +'<input id="cfgIg" placeholder="https://instagram.com/herculesoficial_barber" value="'+esc(cfg.instagram)+'">'
+    +'<label>Endereço (aparece no rodapé do site)</label>'
+    +'<input id="cfgAddr" placeholder="Rua, número, bairro, cidade" value="'+esc(cfg.address||'')+'">'
+    +'<label>Link do Google Maps</label>'
+    +'<input id="cfgMaps" placeholder="https://maps.app.goo.gl/..." value="'+esc(cfg.maps||MAPS_DEFAULT)+'">'
     +'<label>Nova senha de acesso</label>'
     +'<input id="cfgPass" type="password" placeholder="Deixe em branco para manter a atual">'
     +'<br><br><button class="btn btn-gold" onclick="saveCfg()">SALVAR CONFIGURAÇÕES</button><div id="cfgMsg"></div>'
     +'<hr style="border:none;border-top:1px solid #333;margin:24px 0 16px">'
     +'<label>Notificações de novo agendamento</label>'
     +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0 4px"><button id="btnNotif" onclick="enableNotif()" style="background:rgba(184,137,79,.1);border:1px solid var(--gold);color:var(--gold);padding:10px 18px;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer">🔔 Ativar notificações</button></div>'
-    +'<small style="color:var(--muted)">Avisa neste aparelho quando um cliente agendar (Android/PC, com o painel aberto).</small>';
+    +'<small style="color:var(--muted)">Avisa neste aparelho quando um cliente agendar (Android/PC, com o painel aberto).</small>'
+    +'<hr style="border:none;border-top:1px solid #333;margin:24px 0 16px">'
+    +'<label>Backup da agenda</label>'
+    +'<small style="color:var(--muted)">Uma cópia da agenda é guardada sozinha 1 vez por dia (ficam os últimos 14 dias).</small>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0"><button class="btn btn-outline" style="padding:10px 18px;font-size:14px" onclick="backupNow()">💾 Salvar backup agora</button><button class="btn btn-outline" style="padding:10px 18px;font-size:14px" onclick="listBackups()">📋 Ver backups</button></div>'
+    +'<div id="bkpMsg"></div><div id="bkpList"></div>';
   updateNotifBtn();
 }
 async function saveCfg(){
@@ -770,12 +788,94 @@ async function saveCfg(){
     const fresh=fc||cfg; /* versão mais recente do banco */
     fresh.whatsapp=document.getElementById('cfgWa').value.replace(/\D/g,'');
     fresh.instagram=document.getElementById('cfgIg').value.trim();
+    fresh.address=document.getElementById('cfgAddr').value.trim();
+    const mp=document.getElementById('cfgMaps').value.trim();
+    fresh.maps=/^https?:\/\//i.test(mp)?mp:'';
     const np=document.getElementById('cfgPass').value;
     if(np){if(np.length<4){document.getElementById('cfgMsg').innerHTML='<div class="notice err" style="margin-top:12px">A senha deve ter ao menos 4 caracteres.</div>';return;}fresh.password=np;}
     await dbPut('/cfg',fresh);
     cfg=fresh;
     renderPublic();
     document.getElementById('cfgMsg').innerHTML='<div class="notice ok" style="margin-top:12px">Configurações salvas! Já visíveis para todos os clientes.</div>';
+  }catch(e){netErr();}
+}
+
+/* ============ BACKUP DA AGENDA ============ */
+const BKP_KEEP=14;            /* quantos dias de backup ficam guardados */
+let bkpDay='';
+const isoDate=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const bkpDateOf=k=>/^\d{4}-\d{2}-\d{2}/.test(k)?k.slice(0,10):null;
+const bkpKeyOk=k=>/^[0-9A-Za-z_-]+$/.test(k);
+function bkpLabel(k){
+  const d=bkpDateOf(k);const dt=d?d.split('-').reverse().join('/'):k;
+  return dt+(k.includes('_manual')?' (manual)':k.includes('_antes')?' (antes de restaurar)':' (automático)');
+}
+async function bkpKeys(){   /* lista só os nomes dos backups; undefined = erro de rede */
+  try{const r=await fetch(DB+'/backups.json?shallow=true');if(!r.ok)return undefined;const v=await r.json();return v?Object.keys(v).filter(bkpKeyOk):[];}
+  catch(e){return undefined;}
+}
+async function makeBackup(tag){   /* tag: auto | manual | antes. Só COPIA; nunca altera a agenda */
+  const bk=await getBk();         /* lança erro se a rede falhar */
+  const sv=await dbGet('/services');if(sv===undefined)throw new Error('offline');
+  if(!bk.length)return false;     /* nunca guarda backup vazio */
+  const n=new Date(),hm=String(n.getHours()).padStart(2,'0')+String(n.getMinutes()).padStart(2,'0');
+  const id=isoDate(n)+(tag==='auto'?'':(tag==='manual'?'_manual-':'_antes-')+hm);
+  await dbPut('/backups/'+id,{at:n.toISOString(),n:bk.length,bookings:bk,services:Array.isArray(sv)?sv:(sv?Object.values(sv):[])});
+  return true;
+}
+async function pruneBackups(){    /* apaga SÓ backups com mais de BKP_KEEP dias (nunca mexe na agenda) */
+  const keys=await bkpKeys();if(!keys)return;
+  const lim=new Date();lim.setDate(lim.getDate()-BKP_KEEP);const cut=isoDate(lim);
+  for(const k of keys){const d=bkpDateOf(k);if(d&&d<cut)await dbPut('/backups/'+k,null);}
+}
+async function ensureDailyBackup(){   /* 1 backup automático por dia, feito por quem abrir o site primeiro */
+  const t=todayISO();if(bkpDay===t)return;
+  try{
+    const has=await dbGet('/backups/'+t+'/n');
+    if(has===undefined)return;               /* sem internet: tenta de novo depois */
+    if(has===null){
+      if(!(await makeBackup('auto'))){bkpDay=t;return;}   /* agenda vazia: nada a guardar */
+      await pruneBackups();
+    }
+    bkpDay=t;
+  }catch(e){}
+}
+async function backupNow(){
+  const m=document.getElementById('bkpMsg');
+  try{
+    const ok=await makeBackup('manual');
+    m.innerHTML=ok?'<div class="notice ok">Backup salvo!</div>':'<div class="notice info">Não há agendamentos para guardar.</div>';
+    listBackups();
+  }catch(e){netErr();}
+}
+async function listBackups(){
+  const box=document.getElementById('bkpList');if(!box)return;
+  box.innerHTML='<small style="color:var(--muted)">Carregando…</small>';
+  const keys=await bkpKeys();
+  if(keys===undefined){box.innerHTML='<div class="notice err">Sem conexão com a internet agora.</div>';return;}
+  if(!keys.length){box.innerHTML='<div class="notice info">Ainda não há backups. O primeiro é criado sozinho quando houver agendamentos.</div>';return;}
+  keys.sort().reverse();
+  let html='';
+  for(const k of keys){
+    const n=await dbGet('/backups/'+k+'/n');
+    html+='<div class="card" style="padding:12px 16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'
+      +'<div><b style="color:var(--gold)">'+esc(bkpLabel(k))+'</b><br><span style="color:var(--muted);font-size:13px">'+(typeof n==='number'?n:'?')+' agendamento(s)</span></div>'
+      +'<button class="btn btn-danger" onclick="restoreBackup(\''+k+'\')">Restaurar</button></div>';
+  }
+  box.innerHTML=html;
+}
+async function restoreBackup(k){
+  if(!bkpKeyOk(k))return;
+  try{
+    const b=await dbGet('/backups/'+k);
+    if(b===undefined){netErr();return;}
+    const list=(b&&b.bookings)?(Array.isArray(b.bookings)?b.bookings:Object.values(b.bookings)).filter(Boolean):[];
+    if(!list.length){alert('Esse backup está vazio.');return;}
+    if(!confirm('Restaurar a agenda do backup de '+bkpLabel(k)+' ('+list.length+' agendamentos)?\n\nA agenda ATUAL será substituída. Antes disso, uma cópia dela é guardada como "antes de restaurar".'))return;
+    await makeBackup('antes');          /* cópia de segurança da agenda atual (se houver) */
+    await dbPut('/bookings',list);
+    bookings=list;renderAdmin();renderSlots();
+    alert('Agenda restaurada!');listBackups();
   }catch(e){netErr();}
 }
 
@@ -795,12 +895,14 @@ async function refreshBookings(){
     const bk=Array.isArray(data.bookings)?data.bookings:(data.bookings&&typeof data.bookings==='object'?Object.values(data.bookings):[]);
     bookings=bk.filter(Boolean);
     checkNewBk();
+    ensureDailyBackup();
     /* limpeza semanal (segunda): apaga SOMENTE os atendimentos confirmados (✅) de antes desta semana.
        Agendamentos antigos NÃO confirmados ficam guardados até você confirmar ou cancelar. */
     if(typeof admOk!=='undefined'&&admOk){
       const m=mondayISO();
       if(bookings.some(b=>b.date<m&&b.done)){
         try{
+          await ensureDailyBackup(); /* guarda uma cópia ANTES de limpar */
           const latest=await getBk(); /* versão fresca: nunca apaga agendamento novo por engano */
           const gone=latest.filter(b=>b.date<m&&b.done);
           if(gone.length){
@@ -814,7 +916,7 @@ async function refreshBookings(){
       }
     }
     renderSlots(); /* atualiza a grade na hora, se o cliente estiver nela */
-    if(typeof admOk!=='undefined'&&admOk)renderAdmin(); /* atualiza o painel do barbeiro se estiver aberto */
+    if(typeof admOk!=='undefined'&&admOk)renderTabAg(); /* atualiza só a aba de agendamentos (não apaga o que está sendo digitado nas outras abas) */
   }
 }
 function mondayISO(){const d=new Date();d.setDate(d.getDate()-((d.getDay()+6)%7));return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
