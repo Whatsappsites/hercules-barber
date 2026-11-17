@@ -49,7 +49,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(23,23,23,
 .nav-links a:hover{color:var(--gold)}
 .hamb{display:none;background:none;border:none;color:var(--gold);font-size:26px;cursor:pointer}
 /* HERO */
-.hero{min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;background:radial-gradient(ellipse at 50% 30%,#26221b 0%,var(--black) 65%);padding:120px 20px 60px}
+.hero{min-height:min(100vh,760px);display:flex;align-items:center;justify-content:center;text-align:center;background:radial-gradient(ellipse at 50% 30%,#26221b 0%,var(--black) 65%);padding:120px 20px 60px}
 .hero-logo{display:block;width:min(420px,80vw);height:auto;border-radius:12px;box-shadow:0 20px 60px rgba(184,137,79,.18);margin:0 auto 36px}
 .hero h1{font-size:clamp(34px,5.5vw,58px);font-weight:400;letter-spacing:1px}
 .hero h1 .gold-text{font-style:italic}
@@ -71,12 +71,9 @@ input:focus,select:focus{outline:none;border-color:var(--gold)}
 .slot{padding:11px 6px;text-align:center;border:1px solid var(--line);border-radius:6px;cursor:pointer;font-size:14px;background:#121212;transition:.15s}
 .slot:hover{border-color:var(--gold)}
 .slot.sel{background:var(--gold);color:#171717;font-weight:700;border-color:var(--gold)}
-.slot.rec.sel{color:#171717;border:1px solid var(--gold)} /* estrela selecionada: texto escuro visível no dourado */
 .slot.off{opacity:.28;cursor:not-allowed;text-decoration:line-through}
 .slot.off:hover{border-color:var(--line)}
 .slot-empty{color:var(--muted);font-size:14px;padding:8px 0;grid-column:1 / -1}
-.slot.rec{border:1px dashed rgba(184,137,79,.5);color:var(--gold)} /* ⭐ apenas indica recomendado — NÃO parece selecionado */
-.slot-rec-hint{color:var(--gold-light);font-size:13px;margin-top:12px;font-weight:600;grid-column:1 / -1}
 /* CONFIRM */
 .confirm-box{text-align:center;padding:20px}
 .confirm-box .check{font-size:64px;color:var(--gold)}
@@ -388,24 +385,13 @@ function renderSlots(){
     }
   }
   if(!grid.length){box.innerHTML='<p class="slot-empty">⛔ Não atendemos neste dia. Escolha outra data.</p>';return;}
-  const recSet={};
-  const isLunch=t=>{const h=Math.floor(t/60);return h>=12&&h<14;}; /* almoço: 12h às 13h59 (livre, mas sem ⭐) */
-  const firstFree=grid.find(g=>!g.off&&!isLunch(g.t));
-  if(firstFree)recSet[firstFree.t]=true; /* 1º horário livre do dia */
-  /* primeiro horário livre APÓS o fim de cada atendimento (nunca antes, nunca no almoço) */
-  dayBk.forEach(b=>{
-    const e=toMin(b.time)+b.dur;
-    const sl=grid.find(g=>!g.off&&g.t>=e&&!isLunch(g.t));
-    if(sl)recSet[sl.t]=true;
-  });
   let any=false;
   grid.forEach(g=>{
     if(g.off&&!g.hit)return; /* esconde riscados de espaçamento: tela limpa, só aparecem livres e horários ocupados de verdade */
     const d=document.createElement('div');
     d.className='slot'+(g.off?' off':'');
     if(!g.off){
-      if(recSet[g.t]){d.classList.add('rec');d.innerHTML='⭐ '+toHM(g.t);}
-      else d.textContent=toHM(g.t);
+      d.textContent=toHM(g.t);
       d.onclick=()=>{box.querySelectorAll('.slot').forEach(x=>x.classList.remove('sel'));d.classList.add('sel');selSlot=toHM(g.t);};
       if(prevSel===toHM(g.t)){d.classList.add('sel');selSlot=prevSel;} /* mantém o horário escolhido mesmo após atualização automática */
       any=true;
@@ -414,10 +400,6 @@ function renderSlots(){
     box.appendChild(d);
   });
   if(!any){box.innerHTML='<p class="slot-empty">Sem horários disponíveis nesta data.</p>';return;}
-  const hint=document.createElement('p');
-  hint.className='slot-rec-hint';
-  hint.textContent='⭐ Horário recomendado';
-  box.appendChild(hint);
 }
 
 /* ============ BOOKING ============ */
