@@ -167,7 +167,7 @@ td{padding:10px;border-bottom:1px solid #2e2e2e}
       <label>Serviço</label>
       <select id="bkService"></select>
       <label>Data</label>
-      <input type="date" id="bkDate" onchange="renderSlots()">
+      <select id="bkDate" onchange="renderSlots()"><option value="">Selecione a data</option></select>
       <label>Horário disponível</label>
       <div class="slots" id="slots"><p class="slot-empty">Selecione uma data para ver os horários.</p></div>
       <label>Seu nome</label>
@@ -201,6 +201,7 @@ td{padding:10px;border-bottom:1px solid #2e2e2e}
     </div>
     <p id="footHours"></p>
     <p id="footAddr" style="margin-top:10px;display:none"></p>
+    <iframe title="Localização" loading="lazy" referrerpolicy="no-referrer-when-downgrade" src="https://www.google.com/maps?q=-12.152788,-39.747609&z=17&output=embed" style="width:100%;max-width:560px;height:220px;border:0;border-radius:12px;margin-top:14px"></iframe><br>
     <a id="footMap" class="btn btn-outline" style="margin-top:14px;padding:10px 22px;font-size:14px" target="_blank" rel="noopener">📍 Como chegar</a>
     <p style="margin-top:18px">© 2026 Hércules Barber — Todos os direitos reservados.</p>
   </div>
@@ -275,7 +276,33 @@ async function getBk(){
   if(l===undefined)throw new Error('offline');
   return Array.isArray(l)?l.filter(Boolean):(l?Object.values(l).filter(Boolean):[]);
 }
-async function syncSlots(list){const o={};(list||[]).filter(Boolean).forEach(b=>{o[b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur};});return dbPut('/slots',o);}
+async function dbPatch(val){const r=await fetch(await dbUrl('/'),{method:'PATCH',body:JSON.stringify(val)});if(!r.ok)throw new Error('Falha ao salvar');return r.json();}
+/* horários públicos: só ADICIONA/atualiza; remove apenas "órfãos" com mais de 10 min sem agendamento correspondente */
+async function syncSlots(list){
+  const have=await dbGet('/slots'),hv=(have&&!Array.isArray(have))?have:{};
+  const L=(list||[]).filter(Boolean),ids=new Set(L.map(b=>String(b.id))),upd={};
+  L.forEach(b=>{upd['slots/'+b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur};});
+  for(const k in hv){if(!ids.has(k)&&Date.now()-Number(k)>600000)upd['slots/'+k]=null;}
+  if(Object.keys(upd).length)await dbPatch(upd);
+}
+/* ALTERAÇÕES SEGURAS: lê a agenda fresca, muda só o que foi pedido e grava SÓ a diferença (atômico).
+   Nunca reescreve a lista inteira, então um agendamento novo de cliente não é apagado por engano. */
+async function bkMap(){
+  const l=await dbGet('/bookings');if(l===undefined)throw new Error('offline');
+  const m={};
+  if(Array.isArray(l))l.forEach((b,i)=>{if(b)m[i]=b;});else Object.entries(l||{}).forEach(([k,b])=>{if(b)m[k]=b;});
+  return m;
+}
+async function bkApply(fn){
+  const m=await bkMap(),next=JSON.parse(JSON.stringify(m));fn(next);
+  const upd={};
+  for(const k in m){
+    if(!next[k]){upd['bookings/'+k]=null;upd['slots/'+m[k].id]=null;}
+    else if(JSON.stringify(next[k])!==JSON.stringify(m[k])){const b=next[k];upd['bookings/'+k]=b;upd['slots/'+b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur};}
+  }
+  if(Object.keys(upd).length)await dbPatch(upd);
+  return Object.values(next);
+}
 async function dbPut(path,val){
   const r=await fetch(await dbUrl(path),{method:'PUT',body:JSON.stringify(val)});
   if(!r.ok)throw new Error('Falha ao salvar');
@@ -334,9 +361,7 @@ function renderPublic(){
     `<div class="card"><h3>${esc(s.name)}</h3><div class="price gold-text">R$ ${Number(s.price).toFixed(2).replace('.',',')}</div><div class="dur">⏱ ${s.dur} minutos</div></div>`).join('');
   document.getElementById('bkService').innerHTML=svcOk().map(s=>
     `<option value="${s.id}">${esc(s.name)} — R$ ${Number(s.price).toFixed(2).replace('.',',')} (${s.dur}min)</option>`).join('');
-  const d=document.getElementById('bkDate');d.min=todayISO();
-  const mx=new Date();mx.setDate(mx.getDate()+7);
-  d.max=mx.getFullYear()+'-'+String(mx.getMonth()+1).padStart(2,'0')+'-'+String(mx.getDate()).padStart(2,'0');
+  fillDates();
   const wa=waLink('Olá! Vim pelo site do Hércules Barber e gostaria de mais informações.');
   document.getElementById('floatWa').href=wa;
   document.getElementById('footWa').href=wa;
@@ -346,6 +371,21 @@ function renderPublic(){
   document.getElementById('footMap').href=cfg.maps||MAPS_DEFAULT;
   const wd=cfg.days.map((v,i)=>v?DAYS[i].slice(0,3):null).filter(Boolean).join(', ');
   document.getElementById('footHours').innerHTML='Funcionamento: <b style="color:var(--gold)">'+wd+'</b> · '+cfg.start+' às '+cfg.end;
+}
+/* datas liberadas: só os próximos N dias (padrão 7), apenas dias em que a barbearia atende */
+const ADV=()=>Math.max(1,Math.min(30,Number(cfg.advanceDays)||7));
+function fillDates(){
+  const d=document.getElementById('bkDate'),cur=d.value;
+  const open=(Array.isArray(cfg.days)&&cfg.days.length===7)?cfg.days:[0,1,1,1,1,1,1];
+  const WD=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+  let h='<option value="">Selecione a data</option>';
+  for(let i=0;i<ADV();i++){
+    const x=new Date();x.setDate(x.getDate()+i);
+    if(!open[x.getDay()])continue;
+    const iso=isoDate(x);
+    h+='<option value="'+iso+'">'+WD[x.getDay()]+', '+iso.slice(8)+'/'+iso.slice(5,7)+(i===0?' (hoje)':'')+'</option>';
+  }
+  d.innerHTML=h;if(cur)d.value=cur;
 }
 function closeMenu(){document.getElementById('navLinks').classList.remove('open')}
 
@@ -422,7 +462,7 @@ async function submitBooking(){
   const fail=m=>err.innerHTML='<div class="notice err" style="margin-top:14px">'+m+'</div>';
   if(!date)return fail('Selecione a data do atendimento.');
   if(date<todayISO())return fail('Não é possível agendar em datas passadas.');
-  if(date>document.getElementById('bkDate').max)return fail('Agendamento disponível apenas para os próximos 7 dias.');
+  {const lim=new Date();lim.setDate(lim.getDate()+ADV()-1);if(date>isoDate(lim))return fail('Agendamento disponível apenas para os próximos '+ADV()+' dias.');}
   if(!cfg.days[new Date(date+'T12:00:00').getDay()])return fail('Não atendemos neste dia da semana.');
   if(!selSlot)return fail('Escolha um horário disponível.');
   if(!name)return fail('Informe seu nome.');
@@ -486,7 +526,7 @@ async function adminLogin(){
   }catch(err){e.innerHTML='<div class="notice err" style="margin-top:14px">Senha incorreta.</div>';return;}
   admOk=true;document.getElementById('adminLogin').classList.add('hidden');
   document.getElementById('adminPanel').classList.remove('hidden');
-  try{bookings=await getBk();await syncSlots(bookings);dbPut('/cfg/password',null).catch(()=>{});}catch(err){}
+  try{bookings=await getBk();await syncSlots(bookings);dbPut('/cfg/password',null).catch(()=>{});ensureDailyBackup();}catch(err){}
   renderAdmin();
 }
 function adminLogout(){admOk=false;adminTok=null;adminRef=null;document.getElementById('adminPanel').classList.add('hidden');
@@ -586,8 +626,7 @@ async function clearOld(){
     const valorNC=naoConf.reduce((a,b)=>a+Number(b.price||0),0);
     const aviso=naoConf.length?'\n\n⚠️ '+naoConf.length+' deles NÃO foram confirmados (R$ '+valorNC.toFixed(2).replace('.',',')+' não contabilizado). Confirme-os antes se já foram atendidos.':'';
     if(!confirm('Apagar '+oldC+' agendamento(s) antigo(s)? Essa ação não pode ser desfeita.'+aviso))return;
-    bookings=latest.filter(b=>b.date>=todayISO());
-    await dbPut('/bookings',bookings);
+    bookings=await bkApply(m=>{for(const k in m)if(m[k].date<todayISO())delete m[k];});
     renderTabAg();alert('Histórico antigo apagado!');
   }catch(e){netErr();}
 }
@@ -601,9 +640,7 @@ async function changeService(id,sid){
     const st=toMin(target.time);
     const bate=latest.find(x=>x.id!==id&&x.date===target.date&&overlaps(st,st+sv.dur,toMin(x.time),toMin(x.time)+x.dur));
     if(bate){alert('⛔ "'+sv.name+'" dura '+sv.dur+' min e bate com o agendamento das '+bate.time+' ('+bate.name+'). Remarque um dos dois antes de trocar o serviço.');renderAdmin();return;}
-    target.serviceId=sv.id;target.service=sv.name;target.price=sv.price;target.dur=sv.dur;
-    await dbPut('/bookings',latest);
-    bookings=latest;
+    bookings=await bkApply(m=>{for(const k in m)if(m[k].id===id)Object.assign(m[k],{serviceId:sv.id,service:sv.name,price:sv.price,dur:sv.dur});});
     renderAdmin();
   }catch(e){netErr();}
 }
@@ -613,18 +650,14 @@ async function doneBk(id){
   try{
     const latest=await getBk(); /* pega a versão mais recente do banco pra não apagar agendamentos novos */
     const target=latest.find(x=>x.id===id);if(!target)return;
-    target.done=true;
-    await dbPut('/bookings',latest);
-    bookings=latest;
+    bookings=await bkApply(m=>{for(const k in m)if(m[k].id===id)m[k].done=true;});
     renderAdmin();
   }catch(e){netErr();}
 }
 async function cancelBk(id){
   if(!confirm('Cancelar este agendamento?'))return;
   try{
-    bookings=await getBk();
-    bookings=bookings.filter(b=>b.id!==id);
-    await dbPut('/bookings',bookings);
+    bookings=await bkApply(m=>{for(const k in m)if(m[k].id===id)delete m[k];});
     renderTabAg();renderPublic();renderSlots();
     alert('Agendamento cancelado.');
   }catch(e){netErr();}
@@ -665,9 +698,8 @@ async function rsConfirm(){
   const nd=document.getElementById('rsDate').value,nt=document.getElementById('rsTime').value;
   if(!confirm('Remarcar '+rsB.name+' para '+nd.split('-').reverse().join('/')+' às '+nt+'?'))return;
   try{
-    const latest=await getBk();
-    bookings=latest.map(x=>x.id===rsB.id?{...x,date:nd,time:nt}:x);
-    await dbPut('/bookings',bookings);rsClose();renderAdmin();renderSlots();
+    const idr=rsB.id;
+    bookings=await bkApply(m=>{for(const k in m)if(m[k].id===idr){m[k].date=nd;m[k].time=nt;}});rsClose();renderAdmin();renderSlots();
   }catch(e){netErr();}
 }
 function renderTabSv(){
@@ -773,6 +805,8 @@ function renderTabCfg(){
     +'<input id="cfgAddr" placeholder="Rua, número, bairro, cidade" value="'+esc(cfg.address||'')+'">'
     +'<label>Link do Google Maps</label>'
     +'<input id="cfgMaps" placeholder="https://maps.app.goo.gl/..." value="'+esc(cfg.maps||MAPS_DEFAULT)+'">'
+    +'<label>Dias liberados para agendamento (a partir de hoje)</label>'
+    +'<input id="cfgAdv" type="number" min="1" max="30" value="'+ADV()+'">'
     +'<label>Nova senha de acesso</label>'
     +'<input id="cfgPass" type="password" placeholder="Deixe em branco para manter a atual">'
     +'<br><br><button class="btn btn-gold" onclick="saveCfg()">SALVAR CONFIGURAÇÕES</button><div id="cfgMsg"></div>'
@@ -796,6 +830,7 @@ async function saveCfg(){
     fresh.address=document.getElementById('cfgAddr').value.trim();
     const mp=document.getElementById('cfgMaps').value.trim();
     fresh.maps=/^https?:\/\//i.test(mp)?mp:'';
+    fresh.advanceDays=Math.max(1,Math.min(30,parseInt(document.getElementById('cfgAdv').value)||7));
     const np=document.getElementById('cfgPass').value;
     if(np){if(np.length<6){document.getElementById('cfgMsg').innerHTML='<div class="notice err" style="margin-top:12px">A senha deve ter ao menos 6 caracteres.</div>';return;}try{const rr=await fetch('https://identitytoolkit.googleapis.com/v1/accounts:update?key='+FB_API_KEY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idToken:adminTok,password:np,returnSecureToken:true})});const jj=await rr.json();if(!jj.idToken)throw 0;setTok(jj);}catch(x){document.getElementById('cfgMsg').innerHTML='<div class="notice err" style="margin-top:12px">Não foi possível trocar a senha.</div>';return;}}
     await dbPut('/cfg',fresh);
@@ -909,8 +944,7 @@ async function refreshBookings(){
           const latest=await getBk(); /* versão fresca: nunca apaga agendamento novo por engano */
           const gone=latest.filter(b=>b.date<m&&b.done);
           if(gone.length){
-            const kept=latest.filter(b=>!(b.date<m&&b.done));
-            await dbPut('/bookings',kept);
+            const kept=await bkApply(mm=>{for(const k in mm)if(mm[k].date<m&&mm[k].done)delete mm[k];});
             const tot=gone.reduce((a,b)=>a+Number(b.price||0),0);
             dbPut('/lastWeek',{total:tot,week:m}).catch(()=>{});
             bookings=kept;
