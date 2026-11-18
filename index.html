@@ -252,28 +252,34 @@ window.addEventListener('error',function(e){
 /* ============ FIREBASE (banco de dados compartilhado) ============ */
 const DB='https://hercules-barber-default-rtdb.firebaseio.com';
 const MAPS_DEFAULT='https://maps.app.goo.gl/isfQtbfU3AXQ42oN8';
-async function dbGet(path){
-  /* erro de rede => undefined | banco vazio => null (nunca confundir os dois) */
-  try{
-    const r=await fetch(DB+path+'.json');
-    if(!r.ok)return undefined;
-    return await r.json();
-  }catch(e){return undefined;}
+const FB_API_KEY='AIzaSyBZmYWCEKkDSq8mZa1M2HuTnemH4hNOToc', ADMIN_EMAIL='Jv55241@gmail.com';
+let adminTok=null,adminRef=null,adminExp=0;
+function setTok(j){adminTok=j.idToken||j.id_token;adminRef=j.refreshToken||j.refresh_token;adminExp=Date.now()+Number(j.expiresIn||j.expires_in)*1000;}
+async function authQ(){
+  if(!adminTok)return '';
+  if(Date.now()>adminExp-60000&&adminRef){
+    try{const x=await fetch('https://securetoken.googleapis.com/v1/token?key='+FB_API_KEY,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'grant_type=refresh_token&refresh_token='+encodeURIComponent(adminRef)});
+      const j=await x.json();if(j.id_token)setTok(j);}catch(e){}
+  }
+  return 'auth='+encodeURIComponent(adminTok);
 }
-/* agendamentos frescos do banco; se a rede falhar LANÇA erro (nunca devolve [] falso) */
+const dbUrl=async p=>{const q=await authQ();return DB+p+'.json'+(q?'?'+q:'');};
+async function dbGet(path){
+  /* erro de rede/permissão => undefined | banco vazio => null */
+  try{const r=await fetch(await dbUrl(path));if(!r.ok)return undefined;return await r.json();}
+  catch(e){return undefined;}
+}
+/* admin lê /bookings (completo); cliente lê só /slots (data, hora, duração — sem nome/telefone) */
 async function getBk(){
-  const l=await dbGet('/bookings');
+  const l=await dbGet(adminTok?'/bookings':'/slots');
   if(l===undefined)throw new Error('offline');
   return Array.isArray(l)?l.filter(Boolean):(l?Object.values(l).filter(Boolean):[]);
 }
+async function syncSlots(list){const o={};(list||[]).filter(Boolean).forEach(b=>{o[b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur};});return dbPut('/slots',o);}
 async function dbPut(path,val){
-  const r=await fetch(DB+path+'.json',{method:'PUT',body:JSON.stringify(val)});
+  const r=await fetch(await dbUrl(path),{method:'PUT',body:JSON.stringify(val)});
   if(!r.ok)throw new Error('Falha ao salvar');
-  return r.json();
-}
-async function dbPatch(val){
-  const r=await fetch(DB+'/.json',{method:'PATCH',body:JSON.stringify(val)});
-  if(!r.ok)throw new Error('Falha ao salvar');
+  if(path==='/bookings'&&adminTok)await syncSlots(val);
   return r.json();
 }
 async function getSv(){
@@ -284,7 +290,7 @@ async function getSv(){
 function netErr(){alert('Sem conexão com a internet agora. Tente novamente em instantes.');}
 
 const DAYS=['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
-let cfg={whatsapp:'75992112361',instagram:'https://www.instagram.com/herculesoficial_barber',password:'barber123@',start:'08:00',end:'18:00',slotMin:30,
+let cfg={whatsapp:'75992112361',instagram:'https://www.instagram.com/herculesoficial_barber',start:'08:00',end:'18:00',slotMin:30,
   days:[false,true,true,true,true,true,true],
   hours:[0,1,2,3,4,5,6].map(()=>({s1:'08:00',e1:'12:00',s2:'14:00',e2:'18:00'}))};
 let services=[
@@ -312,21 +318,13 @@ function waClient(phone,msg){
 
 /* ============ BOOT: carrega dados do banco ============ */
 async function boot(){
-  const data=await dbGet('/');
-  if(data===undefined){renderPublic();renderSlots();return;} /* sem internet: só mostra, não grava NADA */
-  if(data){
-    if(data.cfg)cfg=data.cfg;
-    if(Array.isArray(data.services)&&data.services.length)services=data.services;
-    if(data.bookings&&typeof data.bookings==='object')bookings=(Array.isArray(data.bookings)?data.bookings:Object.values(data.bookings)).filter(Boolean);
-  }
-  /* grava padrões caso o banco esteja vazio */
-  const patch={};
-  if(!data||!data.cfg)patch.cfg=cfg;
-  if(!data||!Array.isArray(data.services)||!data.services.length)patch.services=services;
-  if(!data||data.bookings==null)patch.bookings=[]; /* só cria se o nó NÃO existir */
-  if(Object.keys(patch).length)await dbPatch(patch);
+  const c=await dbGet('/cfg'),sv=await dbGet('/services');
+  if(c===undefined||sv===undefined){renderPublic();renderSlots();return;}
+  if(c){cfg=c;delete cfg.password;}
+  const sl=Array.isArray(sv)?sv:Object.values(sv||{});
+  if(sl.length)services=sl.filter(Boolean);
+  try{bookings=await getBk();}catch(e){}
   renderPublic();renderSlots();
-  ensureDailyBackup();
 }
 
 /* ============ PUBLIC RENDER ============ */
@@ -424,10 +422,11 @@ async function submitBooking(){
   const fail=m=>err.innerHTML='<div class="notice err" style="margin-top:14px">'+m+'</div>';
   if(!date)return fail('Selecione a data do atendimento.');
   if(date<todayISO())return fail('Não é possível agendar em datas passadas.');
+  if(date>document.getElementById('bkDate').max)return fail('Agendamento disponível apenas para os próximos 7 dias.');
   if(!cfg.days[new Date(date+'T12:00:00').getDay()])return fail('Não atendemos neste dia da semana.');
   if(!selSlot)return fail('Escolha um horário disponível.');
   if(!name)return fail('Informe seu nome.');
-  if(!phone)return fail('Informe seu WhatsApp com DDD.');
+  {const dg=phone.replace(/\D/g,'').length;if(dg<10||dg>11)return fail('Informe um WhatsApp válido com DDD.');}
   savingBk=true;
   /* busca a versão mais recente dos agendamentos antes de gravar */
   let list;
@@ -454,7 +453,8 @@ async function submitBooking(){
   const bk={id:Date.now(),serviceId:s.id,service:s.name,price:s.price,dur:s.dur,date,time:selSlot,name,phone};
   let waWin=null;try{waWin=window.open('about:blank','_blank');}catch(e){} /* abre a aba já no clique para o navegador permitir o redirecionamento depois */
   try{
-    await dbPut('/bookings',[...list,bk]);
+    await dbPut('/slots/'+bk.id,{id:bk.id,date:bk.date,time:bk.time,dur:bk.dur});
+    await dbPut('/bookings/'+bk.id,bk);
     bookings=[...list,bk];
   }catch(e){if(waWin)try{waWin.close();}catch(_){}savingBk=false;netErr();return;}
   savingBk=false;
@@ -464,7 +464,7 @@ async function submitBooking(){
   document.getElementById('doneWa').href=wa;
   if(waWin){try{waWin.location.href=wa;}catch(e){waWin=null;}} /* abre o WhatsApp com a confirmação automaticamente */
   /* push via ntfy: avisa o barbeiro no iPhone/Android mesmo com tudo fechado */
-  try{fetch('https://ntfy.sh/hercules-barber-k7q2x9',{method:'POST',mode:'no-cors',body:'💈 Novo agendamento — Hércules Barber\nCliente: '+name+'\nServiço: '+s.name+'\nData: '+date.split('-').reverse().join('/')+' às '+selSlot+'\nR$ '+s.price.toFixed(2).replace('.',',')});}catch(e){}
+  try{fetch('https://ntfy.sh/hercules-cj2uuvecqcy1j8s4',{method:'POST',mode:'no-cors',body:'💈 Novo agendamento! Abra o painel para ver os detalhes.'});}catch(e){}
   document.getElementById('bookingForm').classList.add('hidden');
   document.getElementById('bookingDone').classList.remove('hidden');
   document.getElementById('bookingDone').scrollIntoView({behavior:'smooth',block:'center'});
@@ -478,13 +478,18 @@ function resetBooking(){
 
 /* ============ ADMIN ============ */
 let admOk=false;
-function adminLogin(){
-  const p=document.getElementById('admPass').value;
-  if(p===cfg.password){admOk=true;document.getElementById('adminLogin').classList.add('hidden');
-    document.getElementById('adminPanel').classList.remove('hidden');renderAdmin();}
-  else document.getElementById('admErr').innerHTML='<div class="notice err" style="margin-top:14px">Senha incorreta.</div>';
+async function adminLogin(){
+  const p=document.getElementById('admPass').value,e=document.getElementById('admErr');
+  try{
+    const x=await fetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+FB_API_KEY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:ADMIN_EMAIL,password:p,returnSecureToken:true})});
+    const j=await x.json();if(!j.idToken)throw 0;setTok(j);
+  }catch(err){e.innerHTML='<div class="notice err" style="margin-top:14px">Senha incorreta.</div>';return;}
+  admOk=true;document.getElementById('adminLogin').classList.add('hidden');
+  document.getElementById('adminPanel').classList.remove('hidden');
+  try{bookings=await getBk();await syncSlots(bookings);dbPut('/cfg/password',null).catch(()=>{});}catch(err){}
+  renderAdmin();
 }
-function adminLogout(){admOk=false;document.getElementById('adminPanel').classList.add('hidden');
+function adminLogout(){admOk=false;adminTok=null;adminRef=null;document.getElementById('adminPanel').classList.add('hidden');
   document.getElementById('adminLogin').classList.remove('hidden');document.getElementById('admPass').value='';}
 function showTab(t,el){document.querySelectorAll('.tab[data-tab]').forEach(x=>x.classList.remove('active'));
   if(el)el.classList.add('active');
@@ -535,13 +540,13 @@ function renderTabAg(){
       +(atendido?' <span class="badge" style="background:rgba(46,204,113,.15);border:1px solid #2ecc71;color:#2ecc71">✅ Atendido</span>':'')
       +'<br><span style="color:var(--muted);font-size:13px">'+esc(b.name)+' · 📱 '+esc(b.phone)+'</span></div>'
       +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
-      +'<select onchange="changeService('+b.id+',this.value)" title="Trocar serviço" style="background:#1e1e1e;color:var(--gold);border:1px solid #444;border-radius:8px;padding:8px;font-size:13px;max-width:100%">'
-      +svcOk().map(x=>'<option value="'+x.id+'" '+(String(x.id)===String(b.serviceId)?'selected':'')+'>'+x.name+' · R$'+x.price+'</option>').join('')
+      +'<select onchange="changeService('+Number(b.id)+',this.value)" title="Trocar serviço" style="background:#1e1e1e;color:var(--gold);border:1px solid #444;border-radius:8px;padding:8px;font-size:13px;max-width:100%">'
+      +svcOk().map(x=>'<option value="'+x.id+'" '+(String(x.id)===String(b.serviceId)?'selected':'')+'>'+esc(x.name)+' · R$'+Number(x.price)+'</option>').join('')
       +'</select>'
       +'<a class="btn btn-outline" style="padding:7px 14px;font-size:13px" target="_blank" href="'+waClient(b.phone,'Olá '+b.name+'! Aqui é do Hércules Barber. Seu horário está confirmado para '+b.date.split('-').reverse().join('/')+' às '+b.time+'. Qualquer imprevisto, me avise!')+'">WhatsApp</a>'
-      +(podeConfirmar?'<button class="btn" style="padding:7px 14px;font-size:13px;border-color:#2ecc71;color:#2ecc71" onclick="doneBk('+b.id+')">✅ Confirmar corte</button>':'')
-      +'<button class="btn btn-outline" style="padding:7px 14px;font-size:13px" onclick="reschedule('+b.id+')">Remarcar</button>'
-      +'<button class="btn btn-danger" onclick="cancelBk('+b.id+')">Cancelar</button></div></div>';
+      +(podeConfirmar?'<button class="btn" style="padding:7px 14px;font-size:13px;border-color:#2ecc71;color:#2ecc71" onclick="doneBk('+Number(b.id)+')">✅ Confirmar corte</button>':'')
+      +'<button class="btn btn-outline" style="padding:7px 14px;font-size:13px" onclick="reschedule('+Number(b.id)+')">Remarcar</button>'
+      +'<button class="btn btn-danger" onclick="cancelBk('+Number(b.id)+')">Cancelar</button></div></div>';
   });
   box.innerHTML=html;
   if(oldOpen)fillOld();
@@ -567,7 +572,7 @@ function fillOld(){
       +'<div><b style="color:var(--gold)">'+esc(b.time)+'</b> — '+esc(b.service)+' <span class="badge">R$ '+Number(b.price).toFixed(2).replace('.',',')+'</span>'
       +(b.done?' <span class="badge" style="background:rgba(46,204,113,.15);border:1px solid #2ecc71;color:#2ecc71">✅ Atendido</span>':' <span class="badge">⏳ Não confirmado</span>')
       +'<br><span style="color:var(--muted);font-size:13px">'+esc(b.name)+' · 📱 '+esc(b.phone)+'</span></div>'
-      +(b.done?'':'<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" style="padding:7px 14px;font-size:13px;border-color:#2ecc71;color:#2ecc71" onclick="doneBk('+b.id+')">✅ Confirmar corte</button><button class="btn btn-danger" onclick="cancelBk('+b.id+')">Cancelar</button></div>')
+      +(b.done?'':'<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" style="padding:7px 14px;font-size:13px;border-color:#2ecc71;color:#2ecc71" onclick="doneBk('+Number(b.id)+')">✅ Confirmar corte</button><button class="btn btn-danger" onclick="cancelBk('+Number(b.id)+')">Cancelar</button></div>')
       +'</div>';
   });
   el.innerHTML=html||'<div class="notice info">Nenhum agendamento antigo.</div>';
@@ -668,8 +673,8 @@ async function rsConfirm(){
 function renderTabSv(){
   const box=document.getElementById('tab-sv');
   let rows=services.map(s=>'<tr><td>'+esc(s.name)+'</td><td>R$ '+Number(s.price).toFixed(2).replace('.',',')+'</td><td>'+s.dur+' min</td>'
-    +'<td style="white-space:nowrap"><button class="btn btn-outline" style="padding:7px 12px;font-size:13px;margin-right:6px" onclick="editService('+s.id+')">Editar</button>'
-    +'<button class="btn btn-danger" onclick="delService('+s.id+')">Excluir</button></td></tr>').join('');
+    +'<td style="white-space:nowrap"><button class="btn btn-outline" style="padding:7px 12px;font-size:13px;margin-right:6px" onclick="editService('+Number(s.id)+')">Editar</button>'
+    +'<button class="btn btn-danger" onclick="delService('+Number(s.id)+')">Excluir</button></td></tr>').join('');
   box.innerHTML='<table><tr><th>Serviço</th><th>Preço</th><th>Duração</th><th></th></tr>'+rows+'</table>'
     +'<h3 style="color:var(--gold);margin:30px 0 4px">Adicionar serviço</h3>'
     +'<div class="row-flex"><input id="svName" placeholder="Nome do serviço"><input id="svPrice" type="number" step="0.01" placeholder="Preço (R$)"><input id="svDur" type="number" placeholder="Duração (min)"></div>'
@@ -746,7 +751,7 @@ async function saveHours(){
   }
   try{
     const fc=await dbGet('/cfg');if(fc===undefined)throw new Error('offline');
-    const fresh=fc||cfg; /* versão mais recente: só muda o que você editou AGORA */
+    const fresh=fc||cfg;delete fresh.password; /* versão mais recente: só muda o que você editou AGORA */
     fresh.days=[];
     for(let i=0;i<7;i++)fresh.days[i]=document.getElementById('day'+i).checked;
     fresh.hours=H;
@@ -785,14 +790,14 @@ function renderTabCfg(){
 async function saveCfg(){
   try{
     const fc=await dbGet('/cfg');if(fc===undefined)throw new Error('offline');
-    const fresh=fc||cfg; /* versão mais recente do banco */
+    const fresh=fc||cfg;delete fresh.password; /* versão mais recente do banco */
     fresh.whatsapp=document.getElementById('cfgWa').value.replace(/\D/g,'');
     fresh.instagram=document.getElementById('cfgIg').value.trim();
     fresh.address=document.getElementById('cfgAddr').value.trim();
     const mp=document.getElementById('cfgMaps').value.trim();
     fresh.maps=/^https?:\/\//i.test(mp)?mp:'';
     const np=document.getElementById('cfgPass').value;
-    if(np){if(np.length<4){document.getElementById('cfgMsg').innerHTML='<div class="notice err" style="margin-top:12px">A senha deve ter ao menos 4 caracteres.</div>';return;}fresh.password=np;}
+    if(np){if(np.length<6){document.getElementById('cfgMsg').innerHTML='<div class="notice err" style="margin-top:12px">A senha deve ter ao menos 6 caracteres.</div>';return;}try{const rr=await fetch('https://identitytoolkit.googleapis.com/v1/accounts:update?key='+FB_API_KEY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idToken:adminTok,password:np,returnSecureToken:true})});const jj=await rr.json();if(!jj.idToken)throw 0;setTok(jj);}catch(x){document.getElementById('cfgMsg').innerHTML='<div class="notice err" style="margin-top:12px">Não foi possível trocar a senha.</div>';return;}}
     await dbPut('/cfg',fresh);
     cfg=fresh;
     renderPublic();
@@ -811,7 +816,7 @@ function bkpLabel(k){
   return dt+(k.includes('_manual')?' (manual)':k.includes('_antes')?' (antes de restaurar)':' (automático)');
 }
 async function bkpKeys(){   /* lista só os nomes dos backups; undefined = erro de rede */
-  try{const r=await fetch(DB+'/backups.json?shallow=true');if(!r.ok)return undefined;const v=await r.json();return v?Object.keys(v).filter(bkpKeyOk):[];}
+  try{const r=await fetch(DB+'/backups.json?shallow=true&'+(await authQ()));if(!r.ok)return undefined;const v=await r.json();return v?Object.keys(v).filter(bkpKeyOk):[];}
   catch(e){return undefined;}
 }
 async function makeBackup(tag){   /* tag: auto | manual | antes. Só COPIA; nunca altera a agenda */
@@ -888,12 +893,10 @@ boot();
    - a cada 30 segundos
    - quando o cliente volta para a aba/janela do site */
 async function refreshBookings(){
-  const data=await dbGet('/');
-  if(!data)return;
-  lastWeekTotal=(data.lastWeek&&typeof data.lastWeek.total==='number')?data.lastWeek.total:null;
+  let bk0;try{bk0=await getBk();}catch(e){return;}
+  if(adminTok){const lw=await dbGet('/lastWeek');lastWeekTotal=(lw&&typeof lw.total==='number')?lw.total:null;}
   {
-    const bk=Array.isArray(data.bookings)?data.bookings:(data.bookings&&typeof data.bookings==='object'?Object.values(data.bookings):[]);
-    bookings=bk.filter(Boolean);
+    bookings=bk0;
     checkNewBk();
     ensureDailyBackup();
     /* limpeza semanal (segunda): apaga SOMENTE os atendimentos confirmados (✅) de antes desta semana.
