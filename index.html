@@ -281,8 +281,13 @@ async function dbPatch(val){const r=await fetch(await dbUrl('/'),{method:'PATCH'
 async function syncSlots(list){
   const have=await dbGet('/slots'),hv=(have&&!Array.isArray(have))?have:{};
   const L=(list||[]).filter(Boolean),ids=new Set(L.map(b=>String(b.id))),upd={};
-  L.forEach(b=>{upd['slots/'+b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur};});
-  for(const k in hv){if(!ids.has(k)&&Date.now()-Number(k)>600000)upd['slots/'+k]=null;}
+  L.forEach(b=>{upd['slots/'+b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};});
+  for(const k in hv){if(!ids.has(k)){const c=hv[k]&&hv[k].createdAt?Number(hv[k].createdAt):(/^[0-9]+$/.test(k)?Number(k):NaN);if(c&&Date.now()-c>600000)upd['slots/'+k]=null;}} /* órfão só se provar idade por createdAt (novo) ou id numérico antigo; UUID sem createdAt nunca é apagado por engano */
+  /* /taken: cria trava para agendamentos antigos (migração) e limpa trava órfã com mais de 10 min. Trava órfã jovem NÃO é apagada: pode ser um cliente no meio do PATCH */
+  const haveTaken=await dbGet('/taken'),ht=(haveTaken&&!Array.isArray(haveTaken))?haveTaken:{};
+  const expected={};L.forEach(b=>{takenKeysFor(b.date,b.time,b.dur).forEach(tk=>{expected[tk]=takenValFor(b,tk);});});
+  for(const tk in expected)upd['taken/'+tk]=expected[tk];
+  for(const tk in ht){if(!expected[tk]){const c=ht[tk]&&ht[tk].createdAt?Number(ht[tk].createdAt):NaN;if(c&&Date.now()-c>600000)upd['taken/'+tk]=null;}}
   if(Object.keys(upd).length)await dbPatch(upd);
 }
 /* ALTERAÇÕES SEGURAS: lê a agenda fresca, muda só o que foi pedido e grava SÓ a diferença (atômico).
@@ -297,9 +302,10 @@ async function bkApply(fn){
   const m=await bkMap(),next=JSON.parse(JSON.stringify(m));fn(next);
   const upd={};
   for(const k in m){
-    if(!next[k]){upd['bookings/'+k]=null;upd['slots/'+m[k].id]=null;}
-    else if(JSON.stringify(next[k])!==JSON.stringify(m[k])){const b=next[k];upd['bookings/'+k]=b;upd['slots/'+b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur};}
+    if(!next[k]){const old=m[k];upd['bookings/'+k]=null;upd['slots/'+old.id]=null;takenKeysFor(old.date,old.time,old.dur).forEach(tk=>{upd['taken/'+tk]=null;});} /* apagar booking apaga a trava junto, no mesmo PATCH */
+    else if(JSON.stringify(next[k])!==JSON.stringify(m[k])){const b=next[k],old=m[k];upd['bookings/'+k]=b;upd['slots/'+b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};if(old.date!==b.date||old.time!==b.time||old.dur!==b.dur){const oK=takenKeysFor(old.date,old.time,old.dur),nK=takenKeysFor(b.date,b.time,b.dur);oK.forEach(tk=>{if(!nK.includes(tk))upd['taken/'+tk]=null;});nK.forEach(tk=>{upd['taken/'+tk]=takenValFor(b,tk);});}} /* só mexe na trava se data/hora/duração mudou: done=true não toca na trava */
   }
+  for(const k in next){if(!m[k]){const b=next[k];upd['bookings/'+k]=b;upd['slots/'+b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};takenKeysFor(b.date,b.time,b.dur).forEach(tk=>{upd['taken/'+tk]=takenValFor(b,tk);});}}
   if(Object.keys(upd).length)await dbPatch(upd);
   return Object.values(next);
 }
@@ -329,7 +335,10 @@ let bookings=[];
 
 /* ============ HELPERS ============ */
 const toMin=t=>{const[a,b]=t.split(':').map(Number);return a*60+b};
+const newBkId=()=>{try{const c=(typeof window!=='undefined'&&window.crypto)||(typeof crypto!=='undefined'?crypto:null);if(c&&c.randomUUID)return c.randomUUID();}catch(e){}return 'bk-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);}; /* id único de verdade: Date.now() colidia no mesmo milissegundo */
 const toHM=m=>String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
+const takenKeysFor=(date,time,dur)=>{const s=toMin(time),e=s+(Number(dur)||0),out=[];for(let t=Math.floor(s/5)*5;t<e;t+=5){if(t+5>s&&t<e)out.push(date+'_'+toHM(t));}return out;}; /* trava de 5 min: cada agendamento reivindica cada fatia de 5 min que ocupa. Dois agendamentos que se sobrepõem nem que seja por 5 min compartilham uma fatia, então o 2º PATCH falha na regra !data.exists() */
+const takenValFor=(b,tk)=>({bookingId:b.id,date:b.date,time:tk.split('_')[1],createdAt:b.createdAt||Date.now()});
 const todayISO=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
 const overlaps=(s1,e1,s2,e2)=>s1<e2&&s2<e1;
 const svc=id=>services.find(s=>s.id==id);
@@ -490,13 +499,14 @@ async function submitBooking(){
     renderSlots();
     return fail('Este horário acabou de ser ocupado. Escolha outro.');
   }
-  const bk={id:Date.now(),serviceId:s.id,service:s.name,price:s.price,dur:s.dur,date,time:selSlot,name,phone};
+  const bk={id:newBkId(),createdAt:Date.now(),serviceId:s.id,service:s.name,price:s.price,dur:s.dur,date,time:selSlot,name,phone};
   let waWin=null;try{waWin=window.open('about:blank','_blank');}catch(e){} /* abre a aba já no clique para o navegador permitir o redirecionamento depois */
   try{
-    await dbPut('/slots/'+bk.id,{id:bk.id,date:bk.date,time:bk.time,dur:bk.dur});
-    await dbPut('/bookings/'+bk.id,bk);
+    const slotV={id:bk.id,date:bk.date,time:bk.time,dur:bk.dur,createdAt:bk.createdAt};
+    const upd={['slots/'+bk.id]:slotV,['bookings/'+bk.id]:bk};takenKeysFor(bk.date,bk.time,bk.dur).forEach(tk=>{upd['taken/'+tk]=takenValFor(bk,tk);});
+    await dbPatch(upd); /* um único envio: trava + horário + agendamento juntos, ou nada. Se a trava já existe, o PATCH inteiro falha: é assim que a corrida é travada no servidor */
     bookings=[...list,bk];
-  }catch(e){if(waWin)try{waWin.close();}catch(_){}savingBk=false;netErr();return;}
+  }catch(e){if(waWin)try{waWin.close();}catch(_){}savingBk=false;try{const fresh=await getBk();if(fresh.some(b=>b.date===date&&overlaps(st,st+s.dur,toMin(b.time),toMin(b.time)+b.dur))){bookings=fresh;renderSlots();return fail('Este horário acabou de ser ocupado. Escolha outro.');}}catch(_){}netErr();return;}
   savingBk=false;
   const msg='✅ *AGENDAMENTO CONFIRMADO — HÉRCULES BARBER*\n\n👤 Cliente: '+name+'\n💈 Serviço: '+s.name+'\n📅 Data: '+date.split('-').reverse().join('/')+' às '+selSlot+'\n💰 Valor: R$ '+s.price.toFixed(2).replace('.',',')+'\n\nAté breve!';
   document.getElementById('doneMsg').innerHTML='<b style="color:var(--gold)">'+esc(s.name)+'</b> · '+date.split('-').reverse().join('/')+' às <b>'+selSlot+'</b><br>Cliente: '+esc(name);
@@ -580,13 +590,13 @@ function renderTabAg(){
       +(atendido?' <span class="badge" style="background:rgba(46,204,113,.15);border:1px solid #2ecc71;color:#2ecc71">✅ Atendido</span>':'')
       +'<br><span style="color:var(--muted);font-size:13px">'+esc(b.name)+' · 📱 '+esc(b.phone)+'</span></div>'
       +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
-      +'<select onchange="changeService('+Number(b.id)+',this.value)" title="Trocar serviço" style="background:#1e1e1e;color:var(--gold);border:1px solid #444;border-radius:8px;padding:8px;font-size:13px;max-width:100%">'
+      +'<select onchange="changeService(\''+b.id+'\',this.value)" title="Trocar serviço" style="background:#1e1e1e;color:var(--gold);border:1px solid #444;border-radius:8px;padding:8px;font-size:13px;max-width:100%">'
       +svcOk().map(x=>'<option value="'+x.id+'" '+(String(x.id)===String(b.serviceId)?'selected':'')+'>'+esc(x.name)+' · R$'+Number(x.price)+'</option>').join('')
       +'</select>'
       +'<a class="btn btn-outline" style="padding:7px 14px;font-size:13px" target="_blank" href="'+waClient(b.phone,'Olá '+b.name+'! Aqui é do Hércules Barber. Seu horário está confirmado para '+b.date.split('-').reverse().join('/')+' às '+b.time+'. Qualquer imprevisto, me avise!')+'">WhatsApp</a>'
-      +(podeConfirmar?'<button class="btn" style="padding:7px 14px;font-size:13px;border-color:#2ecc71;color:#2ecc71" onclick="doneBk('+Number(b.id)+')">✅ Confirmar corte</button>':'')
-      +'<button class="btn btn-outline" style="padding:7px 14px;font-size:13px" onclick="reschedule('+Number(b.id)+')">Remarcar</button>'
-      +'<button class="btn btn-danger" onclick="cancelBk('+Number(b.id)+')">Cancelar</button></div></div>';
+      +(podeConfirmar?'<button class="btn" style="padding:7px 14px;font-size:13px;border-color:#2ecc71;color:#2ecc71" onclick="doneBk(\''+b.id+'\')">✅ Confirmar corte</button>':'')
+      +'<button class="btn btn-outline" style="padding:7px 14px;font-size:13px" onclick="reschedule(\''+b.id+'\')">Remarcar</button>'
+      +'<button class="btn btn-danger" onclick="cancelBk(\''+b.id+'\')">Cancelar</button></div></div>';
   });
   box.innerHTML=html;
   if(oldOpen)fillOld();
@@ -612,7 +622,7 @@ function fillOld(){
       +'<div><b style="color:var(--gold)">'+esc(b.time)+'</b> — '+esc(b.service)+' <span class="badge">R$ '+Number(b.price).toFixed(2).replace('.',',')+'</span>'
       +(b.done?' <span class="badge" style="background:rgba(46,204,113,.15);border:1px solid #2ecc71;color:#2ecc71">✅ Atendido</span>':' <span class="badge">⏳ Não confirmado</span>')
       +'<br><span style="color:var(--muted);font-size:13px">'+esc(b.name)+' · 📱 '+esc(b.phone)+'</span></div>'
-      +(b.done?'':'<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" style="padding:7px 14px;font-size:13px;border-color:#2ecc71;color:#2ecc71" onclick="doneBk('+Number(b.id)+')">✅ Confirmar corte</button><button class="btn btn-danger" onclick="cancelBk('+Number(b.id)+')">Cancelar</button></div>')
+      +(b.done?'':'<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" style="padding:7px 14px;font-size:13px;border-color:#2ecc71;color:#2ecc71" onclick="doneBk(\''+b.id+'\')">✅ Confirmar corte</button><button class="btn btn-danger" onclick="cancelBk(\''+b.id+'\')">Cancelar</button></div>')
       +'</div>';
   });
   el.innerHTML=html||'<div class="notice info">Nenhum agendamento antigo.</div>';
@@ -631,40 +641,40 @@ async function clearOld(){
   }catch(e){netErr();}
 }
 async function changeService(id,sid){
-  const b=bookings.find(x=>x.id===id);if(!b)return;
+  const b=bookings.find(x=>String(x.id)===String(id));if(!b)return;
   const sv=svcOk().find(x=>String(x.id)===String(sid));if(!sv)return;
   if(!confirm('Trocar o serviço de "'+b.service+'" para "'+sv.name+'" (R$ '+sv.price.toFixed(2).replace('.',',')+')?')){renderAdmin();return;}
   try{
     const latest=await getBk();
-    const target=latest.find(x=>x.id===id);if(!target)return;
+    const target=latest.find(x=>String(x.id)===String(id));if(!target)return;
     const st=toMin(target.time);
-    const bate=latest.find(x=>x.id!==id&&x.date===target.date&&overlaps(st,st+sv.dur,toMin(x.time),toMin(x.time)+x.dur));
+    const bate=latest.find(x=>String(x.id)!==String(id)&&x.date===target.date&&overlaps(st,st+sv.dur,toMin(x.time),toMin(x.time)+x.dur));
     if(bate){alert('⛔ "'+sv.name+'" dura '+sv.dur+' min e bate com o agendamento das '+bate.time+' ('+bate.name+'). Remarque um dos dois antes de trocar o serviço.');renderAdmin();return;}
-    bookings=await bkApply(m=>{for(const k in m)if(m[k].id===id)Object.assign(m[k],{serviceId:sv.id,service:sv.name,price:sv.price,dur:sv.dur});});
+    bookings=await bkApply(m=>{for(const k in m)if(String(m[k].id)===String(id))Object.assign(m[k],{serviceId:sv.id,service:sv.name,price:sv.price,dur:sv.dur});});
     renderAdmin();
   }catch(e){netErr();}
 }
 async function doneBk(id){
-  const b=bookings.find(x=>x.id===id);if(!b)return;
+  const b=bookings.find(x=>String(x.id)===String(id));if(!b)return;
   if(!confirm('Confirmar que '+b.name+' já foi atendido? O valor entra em "Recebido".'))return;
   try{
     const latest=await getBk(); /* pega a versão mais recente do banco pra não apagar agendamentos novos */
-    const target=latest.find(x=>x.id===id);if(!target)return;
-    bookings=await bkApply(m=>{for(const k in m)if(m[k].id===id)m[k].done=true;});
+    const target=latest.find(x=>String(x.id)===String(id));if(!target)return;
+    bookings=await bkApply(m=>{for(const k in m)if(String(m[k].id)===String(id))m[k].done=true;});
     renderAdmin();
   }catch(e){netErr();}
 }
 async function cancelBk(id){
   if(!confirm('Cancelar este agendamento?'))return;
   try{
-    bookings=await bkApply(m=>{for(const k in m)if(m[k].id===id)delete m[k];});
+    bookings=await bkApply(m=>{for(const k in m)if(String(m[k].id)===String(id))delete m[k];});
     renderTabAg();renderPublic();renderSlots();
     alert('Agendamento cancelado.');
   }catch(e){netErr();}
 }
 let rsB=null;
 function reschedule(id){
-  const b=bookings.find(x=>x.id==id);if(!b)return;
+  const b=bookings.find(x=>String(x.id)===String(id));if(!b)return;
   rsB=b;
   document.getElementById('rsName').textContent=b.name+' — '+b.service;
   const d=document.getElementById('rsDate');d.min=todayISO();d.value=b.date;
@@ -699,8 +709,12 @@ async function rsConfirm(){
   if(!confirm('Remarcar '+rsB.name+' para '+nd.split('-').reverse().join('/')+' às '+nt+'?'))return;
   try{
     const idr=rsB.id;
-    bookings=await bkApply(m=>{for(const k in m)if(m[k].id===idr){m[k].date=nd;m[k].time=nt;}});rsClose();renderAdmin();renderSlots();
-  }catch(e){netErr();}
+    bookings=await bkApply(m=>{
+      const me=Object.values(m).find(x=>String(x.id)===String(idr)),a=toMin(nt);   /* confere de novo na agenda ATUAL do banco */
+      if(me&&Object.values(m).some(x=>String(x.id)!==String(idr)&&x.date===nd&&overlaps(a,a+me.dur,toMin(x.time),toMin(x.time)+x.dur)))throw new Error('conflito');
+      for(const k in m)if(String(m[k].id)===String(idr)){m[k].date=nd;m[k].time=nt;}
+    });rsClose();renderAdmin();renderSlots();
+  }catch(e){if(e&&e.message==='conflito'){alert('Esse horário acabou de ser ocupado por outro cliente. Escolha outro.');return;}netErr();}
 }
 function renderTabSv(){
   const box=document.getElementById('tab-sv');
@@ -855,6 +869,7 @@ async function bkpKeys(){   /* lista só os nomes dos backups; undefined = erro 
   catch(e){return undefined;}
 }
 async function makeBackup(tag){   /* tag: auto | manual | antes. Só COPIA; nunca altera a agenda */
+  if(!adminTok)return false; /* backup SÓ do admin: cliente lê só /slots (sem nome/telefone) e salvaria backup incompleto */
   const bk=await getBk();         /* lança erro se a rede falhar */
   const sv=await dbGet('/services');if(sv===undefined)throw new Error('offline');
   if(!bk.length)return false;     /* nunca guarda backup vazio */
@@ -868,7 +883,8 @@ async function pruneBackups(){    /* apaga SÓ backups com mais de BKP_KEEP dias
   const lim=new Date();lim.setDate(lim.getDate()-BKP_KEEP);const cut=isoDate(lim);
   for(const k of keys){const d=bkpDateOf(k);if(d&&d<cut)await dbPut('/backups/'+k,null);}
 }
-async function ensureDailyBackup(){   /* 1 backup automático por dia, feito por quem abrir o site primeiro */
+async function ensureDailyBackup(){   /* 1 backup automático por dia, feito pelo ADMIN. Cliente não cria backup: sem backup é melhor que backup sem nome/telefone */
+  if(!adminTok)return;
   const t=todayISO();if(bkpDay===t)return;
   try{
     const has=await dbGet('/backups/'+t+'/n');
@@ -914,6 +930,8 @@ async function restoreBackup(k){
     if(!confirm('Restaurar a agenda do backup de '+bkpLabel(k)+' ('+list.length+' agendamentos)?\n\nA agenda ATUAL será substituída. Antes disso, uma cópia dela é guardada como "antes de restaurar".'))return;
     await makeBackup('antes');          /* cópia de segurança da agenda atual (se houver) */
     await dbPut('/bookings',list);
+    {const o={};list.forEach(b=>{o[b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};});await dbPut('/slots',o);}   /* recria os horários públicos do zero: sem "fantasmas" */
+    {const tO={};list.forEach(b=>{takenKeysFor(b.date,b.time,b.dur).forEach(tk=>{tO[tk]=takenValFor(b,tk);});});await dbPut('/taken',tO);} /* recria as travas do zero: sem trava órfã bloqueando horário livre */
     bookings=list;renderAdmin();renderSlots();
     alert('Agenda restaurada!');listBackups();
   }catch(e){netErr();}
@@ -927,8 +945,15 @@ boot();
 /* Recarrega os agendamentos do Firebase sem precisar dar F5:
    - a cada 30 segundos
    - quando o cliente volta para a aba/janela do site */
+function admWarn(on){
+  let d=document.getElementById('syncwarn');
+  if(!on){if(d)d.remove();return;}
+  if(!d){d=document.createElement('div');d.id='syncwarn';d.style.cssText='position:fixed;top:0;left:0;right:0;background:#c0392b;color:#fff;padding:10px;font-size:14px;text-align:center;z-index:99998';document.body.appendChild(d);}
+  d.textContent='⚠️ Agenda desatualizada: sem conexão ou sessão expirada. Feche e abra o site e entre de novo.';
+}
 async function refreshBookings(){
-  let bk0;try{bk0=await getBk();}catch(e){return;}
+  let bk0;try{bk0=await getBk();}catch(e){admWarn(!!adminTok);return;}
+  admWarn(false);
   if(adminTok){const lw=await dbGet('/lastWeek');lastWeekTotal=(lw&&typeof lw.total==='number')?lw.total:null;}
   {
     bookings=bk0;
