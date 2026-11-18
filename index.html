@@ -271,18 +271,18 @@ async function dbGet(path){
   catch(e){return undefined;}
 }
 /* admin lê /bookings (completo); cliente lê só /slots (data, hora, duração — sem nome/telefone) */
-/* defesa: só aceita registros com id no formato esperado (número antigo ou texto A-Z a-z 0-9 _ -). Evita que um id malicioso chegue ao onclick do painel */
-const idSafe=b=>!!b&&(typeof b.id==='number'||/^[A-Za-z0-9_-]{1,40}$/.test(String(b.id)));
 async function getBk(){
   const l=await dbGet(adminTok?'/bookings':'/slots');
   if(l===undefined)throw new Error('offline');
-  return (Array.isArray(l)?l.filter(Boolean):(l?Object.values(l).filter(Boolean):[])).filter(idSafe);
+  if(Array.isArray(l))return l.filter(b=>b&&isSafeId(b.id));
+  if(!l)return [];
+  return Object.entries(l).filter(([k,b])=>b&&isSafeId(k)&&isSafeId(b.id)).map(([,b])=>b); /* ignora registro com id fora do padrão: mesmo o que já está no banco não chega ao painel nem ao onclick */
 }
 async function dbPatch(val){const r=await fetch(await dbUrl('/'),{method:'PATCH',body:JSON.stringify(val)});if(!r.ok)throw new Error('Falha ao salvar');return r.json();}
 /* horários públicos: só ADICIONA/atualiza; remove apenas "órfãos" com mais de 10 min sem agendamento correspondente */
 async function syncSlots(list){
   const have=await dbGet('/slots'),hv=(have&&!Array.isArray(have))?have:{};
-  const L=(list||[]).filter(Boolean),ids=new Set(L.map(b=>String(b.id))),upd={};
+  const L=(list||[]).filter(b=>b&&isSafeId(b.id)),ids=new Set(L.map(b=>String(b.id))),upd={};
   L.forEach(b=>{upd['slots/'+b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};});
   for(const k in hv){if(!ids.has(k)){const c=hv[k]&&hv[k].createdAt?Number(hv[k].createdAt):(/^[0-9]+$/.test(k)?Number(k):NaN);if(c&&Date.now()-c>600000)upd['slots/'+k]=null;}} /* órfão só se provar idade por createdAt (novo) ou id numérico antigo; UUID sem createdAt nunca é apagado por engano */
   /* /taken: cria trava para agendamentos antigos (migração) e limpa trava órfã com mais de 10 min. Trava órfã jovem NÃO é apagada: pode ser um cliente no meio do PATCH */
@@ -297,7 +297,7 @@ async function syncSlots(list){
 async function bkMap(){
   const l=await dbGet('/bookings');if(l===undefined)throw new Error('offline');
   const m={};
-  if(Array.isArray(l))l.forEach((b,i)=>{if(b&&idSafe(b))m[i]=b;});else Object.entries(l||{}).forEach(([k,b])=>{if(b&&idSafe(b))m[k]=b;});
+  if(Array.isArray(l))l.forEach((b,i)=>{if(b&&isSafeId(b.id))m[i]=b;});else Object.entries(l||{}).forEach(([k,b])=>{if(b&&isSafeId(k)&&isSafeId(b.id))m[k]=b;});
   return m;
 }
 async function bkApply(fn){
@@ -341,6 +341,7 @@ const newBkId=()=>{try{const c=(typeof window!=='undefined'&&window.crypto)||(ty
 const toHM=m=>String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
 const takenKeysFor=(date,time,dur)=>{const s=toMin(time),e=s+(Number(dur)||0),out=[];for(let t=Math.floor(s/5)*5;t<e;t+=5){if(t+5>s&&t<e)out.push(date+'_'+toHM(t));}return out;}; /* trava de 5 min: cada agendamento reivindica cada fatia de 5 min que ocupa. Dois agendamentos que se sobrepõem nem que seja por 5 min compartilham uma fatia, então o 2º PATCH falha na regra !data.exists() */
 const takenValFor=(b,tk)=>({bookingId:b.id,date:b.date,time:tk.split('_')[1],createdAt:b.createdAt||Date.now()});
+const isSafeId=v=>(typeof v==='number'&&Number.isFinite(v)&&String(v).length<=40)||(typeof v==='string'&&/^[A-Za-z0-9_-]{1,40}$/.test(v)); /* id seguro: numérico antigo OU texto [A-Za-z0-9_-]{1,40}. Qualquer outra coisa (aspas, parênteses, ponto-e-vírgula) é rejeitado e nunca chega ao onclick */
 const todayISO=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
 const overlaps=(s1,e1,s2,e2)=>s1<e2&&s2<e1;
 const svc=id=>services.find(s=>s.id==id);
@@ -927,7 +928,7 @@ async function restoreBackup(k){
   try{
     const b=await dbGet('/backups/'+k);
     if(b===undefined){netErr();return;}
-    const list=(b&&b.bookings)?(Array.isArray(b.bookings)?b.bookings:Object.values(b.bookings)).filter(Boolean):[];
+    const list=(b&&b.bookings)?(Array.isArray(b.bookings)?b.bookings:Object.values(b.bookings)).filter(b=>b&&isSafeId(b.id)):[];
     if(!list.length){alert('Esse backup está vazio.');return;}
     if(!confirm('Restaurar a agenda do backup de '+bkpLabel(k)+' ('+list.length+' agendamentos)?\n\nA agenda ATUAL será substituída. Antes disso, uma cópia dela é guardada como "antes de restaurar".'))return;
     await makeBackup('antes');          /* cópia de segurança da agenda atual (se houver) */
