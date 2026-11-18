@@ -271,10 +271,12 @@ async function dbGet(path){
   catch(e){return undefined;}
 }
 /* admin lê /bookings (completo); cliente lê só /slots (data, hora, duração — sem nome/telefone) */
+/* defesa: só aceita registros com id no formato esperado (número antigo ou texto A-Z a-z 0-9 _ -). Evita que um id malicioso chegue ao onclick do painel */
+const idSafe=b=>!!b&&(typeof b.id==='number'||/^[A-Za-z0-9_-]{1,40}$/.test(String(b.id)));
 async function getBk(){
   const l=await dbGet(adminTok?'/bookings':'/slots');
   if(l===undefined)throw new Error('offline');
-  return Array.isArray(l)?l.filter(Boolean):(l?Object.values(l).filter(Boolean):[]);
+  return (Array.isArray(l)?l.filter(Boolean):(l?Object.values(l).filter(Boolean):[])).filter(idSafe);
 }
 async function dbPatch(val){const r=await fetch(await dbUrl('/'),{method:'PATCH',body:JSON.stringify(val)});if(!r.ok)throw new Error('Falha ao salvar');return r.json();}
 /* horários públicos: só ADICIONA/atualiza; remove apenas "órfãos" com mais de 10 min sem agendamento correspondente */
@@ -295,7 +297,7 @@ async function syncSlots(list){
 async function bkMap(){
   const l=await dbGet('/bookings');if(l===undefined)throw new Error('offline');
   const m={};
-  if(Array.isArray(l))l.forEach((b,i)=>{if(b)m[i]=b;});else Object.entries(l||{}).forEach(([k,b])=>{if(b)m[k]=b;});
+  if(Array.isArray(l))l.forEach((b,i)=>{if(b&&idSafe(b))m[i]=b;});else Object.entries(l||{}).forEach(([k,b])=>{if(b&&idSafe(b))m[k]=b;});
   return m;
 }
 async function bkApply(fn){
@@ -582,7 +584,7 @@ function renderTabAg(){
   let html=top,lastDate='';
   const agora=Date.now();
   sorted.forEach(b=>{
-    if(b.date!==lastDate){lastDate=b.date;html+='<h3 style="color:var(--gold);margin:22px 0 8px">📅 '+b.date.split('-').reverse().join('/')+'</h3>'+totalHtml(b.date);}
+    if(b.date!==lastDate){lastDate=b.date;html+='<h3 style="color:var(--gold);margin:22px 0 8px">📅 '+esc(b.date.split('-').reverse().join('/'))+'</h3>'+totalHtml(b.date);}
     const atendido=!!b.done; /* confirmado manualmente pelo barbeiro */
     const podeConfirmar=!atendido&&new Date(b.date+'T'+b.time+':00').getTime()+Number(b.dur||0)*60000<agora; /* horário já passou: libera o botão de confirmar */
     html+='<div class="card" style="padding:16px 20px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;'+(atendido?'opacity:.65;border-left:4px solid #2ecc71;':'')+'">'
@@ -617,7 +619,7 @@ function fillOld(){
   const totaisOld={};old.forEach(b=>{totaisOld[b.date]=(totaisOld[b.date]||0)+Number(b.price||0);});
   let last='',html='';
   old.forEach(b=>{
-    if(b.date!==last){last=b.date;html+='<h3 style="color:var(--muted);margin:18px 0 8px">📅 '+b.date.split('-').reverse().join('/')+'</h3><div style="font-size:13px;color:var(--muted);margin:-4px 0 10px">💰 Total do dia: <b style="color:var(--gold)">R$ '+totaisOld[b.date].toFixed(2).replace('.',',')+'</b></div>';}
+    if(b.date!==last){last=b.date;html+='<h3 style="color:var(--muted);margin:18px 0 8px">📅 '+esc(b.date.split('-').reverse().join('/'))+'</h3><div style="font-size:13px;color:var(--muted);margin:-4px 0 10px">💰 Total do dia: <b style="color:var(--gold)">R$ '+totaisOld[b.date].toFixed(2).replace('.',',')+'</b></div>';}
     html+='<div class="card" style="padding:14px 18px;margin-bottom:10px;opacity:.75;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">'
       +'<div><b style="color:var(--gold)">'+esc(b.time)+'</b> — '+esc(b.service)+' <span class="badge">R$ '+Number(b.price).toFixed(2).replace('.',',')+'</span>'
       +(b.done?' <span class="badge" style="background:rgba(46,204,113,.15);border:1px solid #2ecc71;color:#2ecc71">✅ Atendido</span>':' <span class="badge">⏳ Não confirmado</span>')
