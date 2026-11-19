@@ -254,8 +254,7 @@ window.addEventListener('error',function(e){
 const DB='https://hercules-barber-default-rtdb.firebaseio.com';
 const MAPS_DEFAULT='https://maps.app.goo.gl/isfQtbfU3AXQ42oN8';
 const FB_API_KEY='AIzaSyBZmYWCEKkDSq8mZa1M2HuTnemH4hNOToc', ADMIN_EMAIL='Jv55241@gmail.com';
-// UID do administrador: confira em Firebase > Authentication > Users antes de publicar.
-const ADMIN_UID='CQUhf8zj8FY2Up0bCXY0eQlXMjx2';
+// O servidor autoriza somente a conta administrativa autenticada por e-mail e senha.
 let adminTok=null,adminRef=null,adminExp=0;
 function setTok(j){adminTok=j.idToken||j.id_token;adminRef=j.refreshToken||j.refresh_token;adminExp=Date.now()+Number(j.expiresIn||j.expires_in)*1000;}
 async function authQ(){
@@ -639,10 +638,10 @@ async function adminLogin(){
     showLoginErr('Não foi possível conectar ao Firebase. Confira sua internet e tente novamente.');
     return;
   }
-  // Conta autenticada, mas o projeto pode ter mais de um usuário.
-  // Não remova esta conferência: as regras do banco exigem o mesmo UID.
-  if(j.localId!==ADMIN_UID){
-    showLoginErr('A senha foi aceita, mas esta conta não é o administrador autorizado (UID diferente). Confira o UID em Authentication → Usuários e nas regras do banco.');
+  // Confere a conta do Firebase Authentication sem usar UID fixo de outro projeto.
+  // As regras do Realtime Database fazem a autorização definitiva no servidor.
+  if(String(j.email||'').toLowerCase()!==ADMIN_EMAIL.toLowerCase()){
+    showLoginErr('O Firebase autenticou uma conta diferente do e-mail administrativo configurado. Confira Authentication → Usuários.');
     return;
   }
   setTok(j);
