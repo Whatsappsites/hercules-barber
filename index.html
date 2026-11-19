@@ -300,7 +300,14 @@ async function syncSlots(list){
   if(have===undefined||haveTaken===undefined)throw new Error('Não foi possível conferir a agenda');
   const slots0=(have&&typeof have==='object')?have:{},taken0=(haveTaken&&typeof haveTaken==='object')?haveTaken:{};
   let issues=0,created=0;
-  for(const b of (list||[]).filter(x=>x&&isSafeId(x.id))){
+  const valid=(list||[]).filter(x=>x&&isSafeId(x.id));
+  const knownIDs=new Set(valid.map(x=>String(x.id)));
+  const expectedTaken=new Map();
+  valid.forEach(b=>takenKeysFor(b.date,b.time,b.dur).forEach(key=>expectedTaken.set(key,String(b.id))));
+  // Detecta agendamentos/horários fora de sincronia, sem apagar ou sobrescrever nada.
+  for(const key of Object.keys(slots0))if(!knownIDs.has(String(key)))issues++;
+  for(const key of Object.keys(taken0))if(!expectedTaken.has(key)||expectedTaken.get(key)!==String(taken0[key]?.bookingId))issues++;
+  for(const b of valid){
     const slot={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};
     if(slots0[b.id]){
       if(slots0[b.id].date!==b.date||slots0[b.id].time!==b.time||Number(slots0[b.id].dur)!==Number(b.dur))issues++;
@@ -651,7 +658,8 @@ async function adminLogin(){
     bookings=await getBk();agendaCarregada=true;
     const result=await syncSlots(bookings);
     if(result.issues)alert('⚠️ Detectadas inconsistências na agenda. Nenhum registro foi excluído; confira os horários no Firebase.');
-    dbPut('/cfg/password',null).catch(()=>{});
+    // O login não deve apagar cfg/password nem qualquer agendamento automaticamente.
+    // Se cfg/password legado existir, tratar em manutenção separada após backup.
     ensureDailyBackup();
   }catch(err){
     admWarn(true);
@@ -678,7 +686,7 @@ function renderTabAg(){
   if(old>0){
     top='<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px">'
       +'<button class="badge" style="cursor:pointer;font-size:13px;padding:8px 16px" onclick="toggleOld()">📁 '+old+' antigo(s) oculto(s) — toque para ver</button>'
-      +'<button class="btn btn-outline" onclick="clearOld()">Arquivar histórico</button></div>'
+      +'</div>'
       +'<div id="oldList" style="display:'+(oldOpen?'block':'none')+'"></div>';
   }
   if(!fut.length){
@@ -753,21 +761,9 @@ function fillOld(){
   });
   el.innerHTML=html||'<div class="notice info">Nenhum agendamento antigo.</div>';
 }
-async function clearOld(){
-  try{
-    const latest=await getBk(); /* versão fresca do banco */
-    const alvoIds=new Set(latest.filter(b=>b.date<todayISO()).map(b=>String(b.id)));
-    const oldC=alvoIds.size;
-    if(!oldC)return alert('Não há agendamentos antigos para arquivar.');
-    const naoConf=latest.filter(b=>b.date<todayISO()&&!b.done);
-    const valorNC=naoConf.reduce((a,b)=>a+Number(b.price||0),0);
-    const aviso=naoConf.length?'\n\n⚠️ '+naoConf.length+' deles NÃO foram confirmados (R$ '+valorNC.toFixed(2).replace('.',',')+' não contabilizado). Confirme-os antes se já foram atendidos.':'';
-    if(!confirm('Arquivar '+oldC+' agendamento(s) antigo(s)? Eles sairão da agenda ativa, mas serão preservados em Archive e no backup.'+aviso))return;
-    if(!(await makeBackup('antes')))throw new Error('Backup de segurança não foi criado. Exclusão cancelada.');
-    bookings=await bkApply(m=>{for(const k in m)if(alvoIds.has(String(m[k].id))&&m[k].date<todayISO())delete m[k];},'historico');
-    renderTabAg();alert('Histórico antigo arquivado.');
-  }catch(e){netErr();}
-}
+/* O histórico antigo permanece no Firebase e apenas é ocultado na interface.
+   Arquivamento em massa desativado para impedir exclusões acidentais. */
+
 async function changeService(id,sid){
   const b=bookings.find(x=>String(x.id)===String(id));if(!b)return;
   const sv=svcOk().find(x=>String(x.id)===String(sid));if(!sv)return;
@@ -1069,11 +1065,16 @@ async function restoreBackup(k){
     if(latest.length && !(await makeBackup('antes')))throw new Error('Backup de segurança não confirmado');
     const held=await dbGet('/taken'),archived=await dbGet('/archive');
     if(held===undefined||archived===undefined)throw new Error('Não foi possível verificar travas e cancelamentos');
+    if(adminBookingEdit)throw new Error('Existe outra edição em andamento.');
     const locks=held||{},archive=archived||{};
     const ids=new Set(latest.map(x=>String(x.id)));
     const plan=[...latest],updates={};let ignored=0,inserted=0;
     for(const b of list){
       if(ids.has(String(b.id))||archive[b.id]){ignored++;continue;} // nunca ressuscitar cancelado ou arquivado
+      // Nunca sobrescrever uma reserva de horário existente, mesmo que esteja órfã.
+      const existingSlot=await dbGet('/slots/'+b.id);
+      if(existingSlot===undefined)throw new Error('Não foi possível verificar o horário existente.');
+      if(existingSlot){ignored++;continue;}
       if(!b.date||!b.time||!(Number(b.dur)>0)){ignored++;continue;}
       const st=toMin(b.time),keys=takenKeysFor(b.date,b.time,b.dur);
       const conflict=plan.some(x=>x.date===b.date&&overlaps(st,st+Number(b.dur),toMin(x.time),toMin(x.time)+Number(x.dur))) ||
@@ -1084,7 +1085,22 @@ async function restoreBackup(k){
       keys.forEach(tk=>{updates['taken/'+tk]=takenValFor(b,tk);locks[tk]=updates['taken/'+tk];});
       ids.add(String(b.id));plan.push(b);inserted++;
     }
-    if(inserted)await dbPatch(updates);
+    if(inserted){
+      // Abort if the agenda/archive/locks changed while the preview was prepared.
+      // This reduces races but does NOT replace a server-side transaction.
+      const beforeCommit=await Promise.all(['/bookings','/archive','/taken'].map(p=>dbGet(p)));
+      if(beforeCommit.some(v=>v===undefined))throw new Error('Não foi possível reconfirmar os dados.');
+      const nowBooks=beforeCommit[0]||{},nowArchive=beforeCommit[1]||{},nowTaken=beforeCommit[2]||{};
+      const nowIDs=new Set((Array.isArray(nowBooks)?nowBooks:Object.values(nowBooks)).filter(Boolean).map(x=>String(x.id)));
+      for(const key of Object.keys(updates)){
+        if(!key.startsWith('bookings/'))continue;
+        const id=key.slice('bookings/'.length),b=updates[key];
+        if(nowIDs.has(String(id))||nowArchive[id]||
+           takenKeysFor(b.date,b.time,b.dur).some(tk=>nowTaken[tk]&&String(nowTaken[tk].bookingId)!==String(id)))
+          throw new Error('A agenda mudou durante a recuperação. Operação cancelada para proteger dados.');
+      }
+      await dbPatch(updates);
+    }
     const reread=await getBk();
     const missed=plan.filter(b=>!reread.some(x=>String(x.id)===String(b.id))).length;
     if(missed)throw new Error('Não foi possível conferir todos os agendamentos restaurados.');
