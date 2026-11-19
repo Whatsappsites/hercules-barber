@@ -599,25 +599,64 @@ function resetBooking(){
 /* ============ ADMIN ============ */
 let admOk=false;
 async function adminLogin(){
-  const p=document.getElementById('admPass').value,e=document.getElementById('admErr');
+  const p=document.getElementById('admPass').value;
+  const e=document.getElementById('admErr');
+  e.textContent='';
+  const showLoginErr=(msg)=>{
+    e.textContent='';
+    const aviso=document.createElement('div');
+    aviso.className='notice err';
+    aviso.style.marginTop='14px';
+    aviso.textContent=msg;
+    e.appendChild(aviso);
+  };
+  if(!p){showLoginErr('Digite a senha do administrador.');return;}
+  let j;
   try{
-    const x=await fetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+FB_API_KEY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:ADMIN_EMAIL,password:p,returnSecureToken:true})});
-    const j=await x.json();
-    if(!j.idToken||j.localId!==ADMIN_UID)throw 0;
-    setTok(j);
-  }catch(err){e.innerHTML='<div class="notice err" style="margin-top:14px">Senha incorreta.</div>';return;}
+    const x=await fetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+FB_API_KEY,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email:ADMIN_EMAIL,password:p,returnSecureToken:true})
+    });
+    j=await x.json();
+    if(!x.ok||!j.idToken){
+      const code=String(j&&j.error&&j.error.message||'').split(' : ')[0];
+      if(['INVALID_LOGIN_CREDENTIALS','INVALID_PASSWORD','EMAIL_NOT_FOUND'].includes(code)){
+        showLoginErr('O Firebase não aceitou o e-mail ou a senha. Confira a conta em Authentication → Usuários; se necessário, redefina a senha.');
+      }else if(code==='TOO_MANY_ATTEMPTS_TRY_LATER'){
+        showLoginErr('Muitas tentativas. Aguarde a liberação do Firebase e tente novamente.');
+      }else if(code==='USER_DISABLED'){
+        showLoginErr('Esta conta está desativada no Firebase Authentication.');
+      }else if(code==='OPERATION_NOT_ALLOWED'){
+        showLoginErr('Login por e-mail e senha está desativado no Firebase Authentication → Método de login.');
+      }else if(['API_KEY_INVALID','INVALID_API_KEY','PROJECT_NOT_FOUND'].includes(code)){
+        showLoginErr('Falha na configuração do Firebase. Confira a chave e o projeto configurados no Index.');
+      }else{
+        showLoginErr('Firebase recusou o login ('+(code||'erro desconhecido')+'). Confira a configuração do Authentication.');
+      }
+      return;
+    }
+  }catch(err){
+    showLoginErr('Não foi possível conectar ao Firebase. Confira sua internet e tente novamente.');
+    return;
+  }
+  // Conta autenticada, mas o projeto pode ter mais de um usuário.
+  // Não remova esta conferência: as regras do banco exigem o mesmo UID.
+  if(j.localId!==ADMIN_UID){
+    showLoginErr('A senha foi aceita, mas esta conta não é o administrador autorizado (UID diferente). Confira o UID em Authentication → Usuários e nas regras do banco.');
+    return;
+  }
+  setTok(j);
   admOk=true;document.getElementById('adminLogin').classList.add('hidden');
   document.getElementById('adminPanel').classList.remove('hidden');
   try{
     bookings=await getBk();agendaCarregada=true;
     const result=await syncSlots(bookings);
     if(result.issues)alert('⚠️ Detectadas inconsistências na agenda. Nenhum registro foi excluído; confira os horários no Firebase.');
-    // A antiga senha gravada no /cfg nunca deve voltar ao banco público.
     dbPut('/cfg/password',null).catch(()=>{});
     ensureDailyBackup();
   }catch(err){
     admWarn(true);
-    alert('Não foi possível carregar a agenda completa. Confira a conexão e as permissões antes de editar.');
+    alert('Login aceito, mas não foi possível carregar a agenda completa. Confira as regras do Firebase e sua conexão antes de editar.');
     adminLogout();
     return;
   }
