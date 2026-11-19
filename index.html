@@ -727,7 +727,7 @@ function renderTabAg(){
       +'<select onchange="changeService(\''+b.id+'\',this.value)" title="Trocar serviço" style="background:#1e1e1e;color:var(--gold);border:1px solid #444;border-radius:8px;padding:8px;font-size:13px;max-width:100%">'
       +svcOk().map(x=>'<option value="'+x.id+'" '+(String(x.id)===String(b.serviceId)?'selected':'')+'>'+esc(x.name)+' · R$'+Number(x.price)+'</option>').join('')
       +'</select>'
-      +'<a class="btn btn-outline" style="padding:7px 14px;font-size:13px" target="_blank" href="'+waClient(b.phone,'Olá '+b.name+'! Aqui é do Hércules Barber. Seu horário está confirmado para '+b.date.split('-').reverse().join('/')+' às '+b.time+'. Qualquer imprevisto, me avise!')+'">WhatsApp</a>'
+      +'<a class="btn btn-outline" style="padding:7px 14px;font-size:13px" target="_blank" href="'+waClient(b.phone,'Olá '+b.name+'! Aqui é do Hércules Barber. Seu horário está confirmado para '+b.date.split('-').reverse().join('/')+' às '+b.time+'. Qualquer imprevisto, por favor, me avise com antecedência!')+'">WhatsApp</a>'
       +(podeConfirmar?'<button class="btn" style="padding:7px 14px;font-size:13px;border-color:#2ecc71;color:#2ecc71" onclick="doneBk(\''+b.id+'\')">✅ Confirmar corte</button>':'')
       +'<button class="btn btn-outline" style="padding:7px 14px;font-size:13px" onclick="reschedule(\''+b.id+'\')">Remarcar</button>'
       +'<button class="btn btn-danger" onclick="cancelBk(\''+b.id+'\')">Cancelar</button></div></div>';
