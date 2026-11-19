@@ -254,6 +254,8 @@ window.addEventListener('error',function(e){
 const DB='https://hercules-barber-default-rtdb.firebaseio.com';
 const MAPS_DEFAULT='https://maps.app.goo.gl/isfQtbfU3AXQ42oN8';
 const FB_API_KEY='AIzaSyBZmYWCEKkDSq8mZa1M2HuTnemH4hNOToc', ADMIN_EMAIL='Jv55241@gmail.com';
+// UID do administrador: confira em Firebase > Authentication > Users antes de publicar.
+const ADMIN_UID='CQUhf8zj8FY2Up0bCXY0eQlXMjx2';
 let adminTok=null,adminRef=null,adminExp=0;
 function setTok(j){adminTok=j.idToken||j.id_token;adminRef=j.refreshToken||j.refresh_token;adminExp=Date.now()+Number(j.expiresIn||j.expires_in)*1000;}
 async function authQ(){
@@ -278,20 +280,42 @@ async function getBk(){
   if(!l)return [];
   return Object.entries(l).filter(([k,b])=>b&&isSafeId(k)&&isSafeId(b.id)).map(([,b])=>b); /* ignora registro com id fora do padrão: mesmo o que já está no banco não chega ao painel nem ao onclick */
 }
-async function dbPatch(val){const r=await fetch(await dbUrl('/'),{method:'PATCH',body:JSON.stringify(val)});if(!r.ok)throw new Error('Falha ao salvar');return r.json();}
-/* horários públicos: só ADICIONA/atualiza; remove apenas "órfãos" com mais de 10 min sem agendamento correspondente */
-async function syncSlots(list){
-  const have=await dbGet('/slots'),hv=(have&&!Array.isArray(have))?have:{};
-  const L=(list||[]).filter(b=>b&&isSafeId(b.id)),ids=new Set(L.map(b=>String(b.id))),upd={};
-  L.forEach(b=>{upd['slots/'+b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};});
-  for(const k in hv){if(!ids.has(k)){const c=hv[k]&&hv[k].createdAt?Number(hv[k].createdAt):(/^[0-9]+$/.test(k)?Number(k):NaN);if(c&&Date.now()-c>600000)upd['slots/'+k]=null;}} /* órfão só se provar idade por createdAt (novo) ou id numérico antigo; UUID sem createdAt nunca é apagado por engano */
-  /* /taken: cria trava para agendamentos antigos (migração) e limpa trava órfã com mais de 10 min. Trava órfã jovem NÃO é apagada: pode ser um cliente no meio do PATCH */
-  const haveTaken=await dbGet('/taken'),ht=(haveTaken&&!Array.isArray(haveTaken))?haveTaken:{};
-  const expected={};L.forEach(b=>{takenKeysFor(b.date,b.time,b.dur).forEach(tk=>{expected[tk]=takenValFor(b,tk);});});
-  for(const tk in expected)upd['taken/'+tk]=expected[tk];
-  for(const tk in ht){if(!expected[tk]){const c=ht[tk]&&ht[tk].createdAt?Number(ht[tk].createdAt):NaN;if(c&&Date.now()-c>600000)upd['taken/'+tk]=null;}}
-  if(Object.keys(upd).length)await dbPatch(upd);
+async function dbPatch(val){
+  const r=await fetch(await dbUrl('/'),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(val)});
+  if(!r.ok)throw new Error('Falha ao salvar ('+r.status+')');
+  return r.json();
 }
+/* PUT condicional: insere somente se a chave ainda estiver vazia. Protege a migração
+   contra sobrescrita de um agendamento criado entre a leitura e a gravação. */
+async function dbCreateIfAbsent(path,val){
+  const r=await fetch(await dbUrl(path),{method:'PUT',headers:{'Content-Type':'application/json','if-match':'null_etag'},body:JSON.stringify(val)});
+  if(r.status===412)return false;
+  if(!r.ok)throw new Error('Falha ao proteger agendamento ('+r.status+')');
+  return true;
+}
+/* Migração/reparação CONSERVADORA: só cria registros que estiverem ausentes.
+   Não apaga nem substitui slots ou travas automaticamente. Se detectar inconsistência,
+   avisa no console para revisão, em vez de tentar uma limpeza destrutiva. */
+async function syncSlots(list){
+  const have=await dbGet('/slots'),haveTaken=await dbGet('/taken');
+  if(have===undefined||haveTaken===undefined)throw new Error('Não foi possível conferir a agenda');
+  const slots0=(have&&typeof have==='object')?have:{},taken0=(haveTaken&&typeof haveTaken==='object')?haveTaken:{};
+  let issues=0,created=0;
+  for(const b of (list||[]).filter(x=>x&&isSafeId(x.id))){
+    const slot={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};
+    if(slots0[b.id]){
+      if(slots0[b.id].date!==b.date||slots0[b.id].time!==b.time||Number(slots0[b.id].dur)!==Number(b.dur))issues++;
+    }else if(await dbCreateIfAbsent('/slots/'+b.id,slot))created++;
+    for(const key of takenKeysFor(b.date,b.time,b.dur)){
+      if(taken0[key]){
+        if(String(taken0[key].bookingId)!==String(b.id))issues++;
+      }else if(await dbCreateIfAbsent('/taken/'+key,takenValFor(b,key)))created++;
+    }
+  }
+  if(issues)console.warn('Hércules Barber: '+issues+' inconsistência(s) entre agendamentos e horários; revisão manual necessária.');
+  return {issues,created};
+}
+
 /* ALTERAÇÕES SEGURAS: lê a agenda fresca, muda só o que foi pedido e grava SÓ a diferença (atômico).
    Nunca reescreve a lista inteira, então um agendamento novo de cliente não é apagado por engano. */
 async function bkMap(){
@@ -300,16 +324,21 @@ async function bkMap(){
   if(Array.isArray(l))l.forEach((b,i)=>{if(b&&isSafeId(b.id))m[i]=b;});else Object.entries(l||{}).forEach(([k,b])=>{if(b&&isSafeId(k)&&isSafeId(b.id))m[k]=b;});
   return m;
 }
-async function bkApply(fn){
+let adminBookingEdit=false;
+async function bkApply(fn,reason='cancelado'){
+  if(adminBookingEdit)throw new Error('Outra alteração está em andamento.');
+  adminBookingEdit=true;
+  try{
   const m=await bkMap(),next=JSON.parse(JSON.stringify(m));fn(next);
   const upd={};
   for(const k in m){
-    if(!next[k]){const old=m[k];upd['bookings/'+k]=null;upd['slots/'+old.id]=null;takenKeysFor(old.date,old.time,old.dur).forEach(tk=>{upd['taken/'+tk]=null;});} /* apagar booking apaga a trava junto, no mesmo PATCH */
+    if(!next[k]){const old=m[k];upd['archive/'+old.id]={...old,archivedAt:Date.now(),reason:reason};upd['bookings/'+k]=null;upd['slots/'+old.id]=null;takenKeysFor(old.date,old.time,old.dur).forEach(tk=>{upd['taken/'+tk]=null;});} /* apagar booking apaga a trava junto, no mesmo PATCH */
     else if(JSON.stringify(next[k])!==JSON.stringify(m[k])){const b=next[k],old=m[k];upd['bookings/'+k]=b;upd['slots/'+b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};if(old.date!==b.date||old.time!==b.time||old.dur!==b.dur){const oK=takenKeysFor(old.date,old.time,old.dur),nK=takenKeysFor(b.date,b.time,b.dur);oK.forEach(tk=>{if(!nK.includes(tk))upd['taken/'+tk]=null;});nK.forEach(tk=>{upd['taken/'+tk]=takenValFor(b,tk);});}} /* só mexe na trava se data/hora/duração mudou: done=true não toca na trava */
   }
   for(const k in next){if(!m[k]){const b=next[k];upd['bookings/'+k]=b;upd['slots/'+b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};takenKeysFor(b.date,b.time,b.dur).forEach(tk=>{upd['taken/'+tk]=takenValFor(b,tk);});}}
   if(Object.keys(upd).length)await dbPatch(upd);
   return Object.values(next);
+  }finally{adminBookingEdit=false;}
 }
 async function dbPut(path,val){
   const r=await fetch(await dbUrl(path),{method:'PUT',body:JSON.stringify(val)});
@@ -334,6 +363,7 @@ let services=[
   {id:3,name:'Corte + Barba + Sobrancelha',price:35,dur:60}
 ];
 let bookings=[];
+let agendaCarregada=false; // sem leitura do Firebase, não apresentar vagas como livres
 
 /* ============ HELPERS ============ */
 const toMin=t=>{const[a,b]=t.split(':').map(Number);return a*60+b};
@@ -358,11 +388,11 @@ function waClient(phone,msg){
 /* ============ BOOT: carrega dados do banco ============ */
 async function boot(){
   const c=await dbGet('/cfg'),sv=await dbGet('/services');
-  if(c===undefined||sv===undefined){renderPublic();renderSlots();return;}
+  if(c===undefined||sv===undefined){agendaCarregada=false;renderPublic();renderSlots();return;}
   if(c){cfg=c;delete cfg.password;}
   const sl=Array.isArray(sv)?sv:Object.values(sv||{});
   if(sl.length)services=sl.filter(Boolean);
-  try{bookings=await getBk();}catch(e){}
+  try{bookings=await getBk();agendaCarregada=true;}catch(e){agendaCarregada=false;}
   renderPublic();renderSlots();
 }
 
@@ -372,7 +402,7 @@ function renderPublic(){
   document.getElementById('servicesGrid').innerHTML=svcOk().map(s=>
     `<div class="card"><h3>${esc(s.name)}</h3><div class="price gold-text">R$ ${Number(s.price).toFixed(2).replace('.',',')}</div><div class="dur">⏱ ${s.dur} minutos</div></div>`).join('');
   document.getElementById('bkService').innerHTML=svcOk().map(s=>
-    `<option value="${s.id}">${esc(s.name)} — R$ ${Number(s.price).toFixed(2).replace('.',',')} (${s.dur}min)</option>`).join('');
+    `<option value="${esc(s.id)}">${esc(s.name)} — R$ ${Number(s.price).toFixed(2).replace('.',',')} (${Number(s.dur)}min)</option>`).join('');
   fillDates();
   const wa=waLink('Olá! Vim pelo site do Hércules Barber e gostaria de mais informações.');
   document.getElementById('floatWa').href=wa;
@@ -381,8 +411,15 @@ function renderPublic(){
   const ad=String(cfg.address||'').trim(),fa=document.getElementById('footAddr');
   fa.innerHTML=ad?'📍 '+esc(ad):'';fa.style.display=ad?'block':'none';
   document.getElementById('footMap').href=cfg.maps||MAPS_DEFAULT;
-  const wd=cfg.days.map((v,i)=>v?DAYS[i].slice(0,3):null).filter(Boolean).join(', ');
-  document.getElementById('footHours').innerHTML='Funcionamento: <b style="color:var(--gold)">'+wd+'</b> · '+cfg.start+' às '+cfg.end;
+  const resumoHoras=(cfg.days||[]).map((aberto,i)=>{
+    if(!aberto)return null;
+    const h=(Array.isArray(cfg.hours)&&cfg.hours[i])||null;
+    const periodos=[];
+    if(h){if((h.s1||h.s)&&(h.e1||h.e))periodos.push((h.s1||h.s)+'–'+(h.e1||h.e));if(h.s2&&h.e2)periodos.push(h.s2+'–'+h.e2);}
+    else periodos.push(cfg.start+'–'+cfg.end);
+    return DAYS[i].slice(0,3)+': '+(periodos.join(' e ')||'consulte horários');
+  }).filter(Boolean);
+  document.getElementById('footHours').textContent='Funcionamento: '+resumoHoras.join(' | ');
 }
 /* datas liberadas: só os próximos N dias (padrão 7), apenas dias em que a barbearia atende */
 const ADV=()=>Math.max(1,Math.min(30,Number(cfg.advanceDays)||7));
@@ -409,6 +446,7 @@ function renderSlots(){
   box.innerHTML='';selSlot=null;
   const date=document.getElementById('bkDate').value;
   if(!date){box.innerHTML='<p class="slot-empty">Selecione uma data para ver os horários.</p>';return;}
+  if(!agendaCarregada){box.innerHTML='<p class="slot-empty">⚠️ Não foi possível carregar a agenda. Verifique sua internet antes de agendar.</p>';return;}
   const dow=new Date(date+'T12:00:00').getDay();
   const daysOpen=(Array.isArray(cfg.days)&&cfg.days.length===7)?cfg.days:[1,1,1,1,1,1,0];
   if(!daysOpen[dow]){box.innerHTML='<p class="slot-empty">⛔ Não atendemos neste dia. Escolha outra data.</p>';return;}
@@ -417,8 +455,8 @@ function renderSlots(){
   const dH=HrDia?HrDia[dow]:null;
   const ranges=[];
   const addR=(a,b)=>{const x=toMin(a||''),y=toMin(b||'');if(!isNaN(x)&&!isNaN(y)&&y>x)ranges.push([x,y]);};
-  addR((dH&&(dH.s1||dH.s))||cfg.start,(dH&&(dH.e1||dH.e))||cfg.end); /* período 1 (manhã) */
-  addR(dH&&dH.s2,dH&&dH.e2); /* período 2 (tarde) — opcional; o vão entre os períodos é o almoço */
+  if(dH){addR(dH.s1||dH.s,dH.e1||dH.e);addR(dH.s2,dH.e2);}
+  else addR(cfg.start,cfg.end); /* sem turnos por dia, usa expediente geral */ /* período 2 (tarde) — opcional; o vão entre os períodos é o almoço */
   const dayBk=(bookings||[]).filter(b=>b&&b.date===date&&!isNaN(toMin(b.time||''))&&b.dur>0);
   /* GRADE DINÂMICA: passo ajustado à duração do serviço — múltiplo maior
      de 20/10/5 que divide a duração. Ex.: Corte(40) e Corte+Barba(60) usam
@@ -472,6 +510,7 @@ async function submitBooking(){
   const phone=document.getElementById('bkPhone').value.trim();
   const s=svc(sid);
   const fail=m=>err.innerHTML='<div class="notice err" style="margin-top:14px">'+m+'</div>';
+  if(!s||!Number.isFinite(Number(s.dur))||Number(s.dur)<5)return fail('Serviço inválido. Atualize o site e tente novamente.');
   if(!date)return fail('Selecione a data do atendimento.');
   if(date<todayISO())return fail('Não é possível agendar em datas passadas.');
   {const lim=new Date();lim.setDate(lim.getDate()+ADV()-1);if(date>isoDate(lim))return fail('Agendamento disponível apenas para os próximos '+ADV()+' dias.');}
@@ -480,6 +519,19 @@ async function submitBooking(){
   if(!name)return fail('Informe seu nome.');
   {const dg=phone.replace(/\D/g,'').length;if(dg<10||dg>11)return fail('Informe um WhatsApp válido com DDD.');}
   savingBk=true;
+  // Confirma configurações e preços antes do envio: mudanças de expediente podem
+  // acontecer enquanto o cliente está com a página aberta.
+  const currentCfg=await dbGet('/cfg'),currentSv=await dbGet('/services');
+  if(currentCfg===undefined||currentSv===undefined){savingBk=false;return fail('Sem conexão para conferir os horários. Não foi realizado agendamento.');}
+  const latestSv=Array.isArray(currentSv)?currentSv:Object.values(currentSv||{});
+  const publicCfg=currentCfg?{...currentCfg}:null;
+  if(publicCfg)delete publicCfg.password; // campo legado privado não altera o expediente
+  if((publicCfg&&JSON.stringify(publicCfg)!==JSON.stringify(cfg)) || JSON.stringify(latestSv)!==JSON.stringify(services)){
+    if(publicCfg)cfg=publicCfg;
+    services=latestSv;
+    renderPublic();renderSlots();savingBk=false;
+    return fail('Horários ou serviços foram atualizados. Selecione novamente antes de confirmar.');
+  }
   /* busca a versão mais recente dos agendamentos antes de gravar */
   let list;
   try{list=await getBk();}catch(e){savingBk=false;netErr();return;}
@@ -493,8 +545,8 @@ async function submitBooking(){
   const dHB=HrBk?HrBk[dowBk]:null;
   const rangesBk=[];
   const addRB=(a,b)=>{const x=toMin(a||''),y=toMin(b||'');if(!isNaN(x)&&!isNaN(y)&&y>x)rangesBk.push([x,y]);};
-  addRB((dHB&&(dHB.s1||dHB.s))||cfg.start,(dHB&&(dHB.e1||dHB.e))||cfg.end);
-  addRB(dHB&&dHB.s2,dHB&&dHB.e2);
+  if(dHB){addRB(dHB.s1||dHB.s,dHB.e1||dHB.e);addRB(dHB.s2,dHB.e2);}
+  else addRB(cfg.start,cfg.end);
   if(!rangesBk.some(r=>st>=r[0]&&st+s.dur<=r[1])){savingBk=false;return fail('⛔ Fora do expediente deste dia (ou não cabe antes do fechamento). Escolha outro horário.');}
   if(list.some(b=>b.date===date&&overlaps(st,st+s.dur,toMin(b.time),toMin(b.time)+b.dur))){
     savingBk=false;
@@ -509,7 +561,22 @@ async function submitBooking(){
     const upd={['slots/'+bk.id]:slotV,['bookings/'+bk.id]:bk};takenKeysFor(bk.date,bk.time,bk.dur).forEach(tk=>{upd['taken/'+tk]=takenValFor(bk,tk);});
     await dbPatch(upd); /* um único envio: trava + horário + agendamento juntos, ou nada. Se a trava já existe, o PATCH inteiro falha: é assim que a corrida é travada no servidor */
     bookings=[...list,bk];
-  }catch(e){if(waWin)try{waWin.close();}catch(_){}savingBk=false;try{const fresh=await getBk();if(fresh.some(b=>b.date===date&&overlaps(st,st+s.dur,toMin(b.time),toMin(b.time)+b.dur))){bookings=fresh;renderSlots();return fail('Este horário acabou de ser ocupado. Escolha outro.');}}catch(_){}netErr();return;}
+  }catch(e){
+    if(waWin)try{waWin.close();}catch(_){}
+    savingBk=false;
+    // Uma conexão interrompida pode ocultar uma gravação que o servidor aceitou.
+    // Confere especificamente o ID criado, antes de permitir uma nova tentativa.
+    try{
+      const mine=await dbGet('/slots/'+bk.id);
+      if(mine&&String(mine.id)===String(bk.id)){
+        const fresh=await getBk();bookings=fresh;renderSlots();
+        return fail('O servidor recebeu seu agendamento. Atualize a página para conferi-lo antes de tentar de novo.');
+      }
+      const fresh=await getBk();
+      if(fresh.some(b=>b.date===date&&overlaps(st,st+s.dur,toMin(b.time),toMin(b.time)+b.dur))){bookings=fresh;renderSlots();return fail('Este horário acabou de ser ocupado. Escolha outro.');}
+    }catch(_){}
+    return fail('Não foi possível confirmar o resultado da gravação. Confira a agenda antes de tentar novamente, para evitar duplicações.');
+  }
   savingBk=false;
   const msg='✅ *AGENDAMENTO CONFIRMADO — HÉRCULES BARBER*\n\n👤 Cliente: '+name+'\n💈 Serviço: '+s.name+'\n📅 Data: '+date.split('-').reverse().join('/')+' às '+selSlot+'\n💰 Valor: R$ '+s.price.toFixed(2).replace('.',',')+'\n\nAté breve!';
   document.getElementById('doneMsg').innerHTML='<b style="color:var(--gold)">'+esc(s.name)+'</b> · '+date.split('-').reverse().join('/')+' às <b>'+selSlot+'</b><br>Cliente: '+esc(name);
@@ -535,11 +602,25 @@ async function adminLogin(){
   const p=document.getElementById('admPass').value,e=document.getElementById('admErr');
   try{
     const x=await fetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+FB_API_KEY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:ADMIN_EMAIL,password:p,returnSecureToken:true})});
-    const j=await x.json();if(!j.idToken)throw 0;setTok(j);
+    const j=await x.json();
+    if(!j.idToken||j.localId!==ADMIN_UID)throw 0;
+    setTok(j);
   }catch(err){e.innerHTML='<div class="notice err" style="margin-top:14px">Senha incorreta.</div>';return;}
   admOk=true;document.getElementById('adminLogin').classList.add('hidden');
   document.getElementById('adminPanel').classList.remove('hidden');
-  try{bookings=await getBk();await syncSlots(bookings);dbPut('/cfg/password',null).catch(()=>{});ensureDailyBackup();}catch(err){}
+  try{
+    bookings=await getBk();agendaCarregada=true;
+    const result=await syncSlots(bookings);
+    if(result.issues)alert('⚠️ Detectadas inconsistências na agenda. Nenhum registro foi excluído; confira os horários no Firebase.');
+    // A antiga senha gravada no /cfg nunca deve voltar ao banco público.
+    dbPut('/cfg/password',null).catch(()=>{});
+    ensureDailyBackup();
+  }catch(err){
+    admWarn(true);
+    alert('Não foi possível carregar a agenda completa. Confira a conexão e as permissões antes de editar.');
+    adminLogout();
+    return;
+  }
   renderAdmin();
 }
 function adminLogout(){admOk=false;adminTok=null;adminRef=null;document.getElementById('adminPanel').classList.add('hidden');
@@ -559,7 +640,7 @@ function renderTabAg(){
   if(old>0){
     top='<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px">'
       +'<button class="badge" style="cursor:pointer;font-size:13px;padding:8px 16px" onclick="toggleOld()">📁 '+old+' antigo(s) oculto(s) — toque para ver</button>'
-      +'<button class="btn btn-danger" onclick="clearOld()">Apagar histórico</button></div>'
+      +'<button class="btn btn-outline" onclick="clearOld()">Arquivar histórico</button></div>'
       +'<div id="oldList" style="display:'+(oldOpen?'block':'none')+'"></div>';
   }
   if(!fut.length){
@@ -569,12 +650,16 @@ function renderTabAg(){
   const sorted=fut.sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
   /* resumo semanal: total da semana atual + da semana passada (guardado antes da limpeza de segunda) */
   const mSeg=mondayISO();
+  const prevSegDate=new Date(mSeg+'T12:00:00');prevSegDate.setDate(prevSegDate.getDate()-7);
+  const prevSeg=isoDate(prevSegDate);
+  const prevBookings=(bookings||[]).filter(b=>b.date>=prevSeg&&b.date<mSeg&&b.done);
+  const prevTotal=prevBookings.length?prevBookings.reduce((v,b)=>v+Number(b.price||0),0):lastWeekTotal;
   const recSem=(bookings||[]).filter(b=>b.date>=mSeg&&b.done).reduce((a,b)=>a+Number(b.price||0),0);
   const pendSem=(bookings||[]).filter(b=>b.date>=mSeg&&!b.done).reduce((a,b)=>a+Number(b.price||0),0);
   top='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px">'
     +'<span class="badge" style="background:rgba(184,137,79,.12);border:1px solid var(--gold);color:var(--gold);padding:8px 14px;border-radius:999px;font-size:14px">📅 Semana — recebido: <b>R$ '+recSem.toFixed(2).replace('.',',')+'</b></span>'
     +(pendSem>0?'<span class="badge" style="background:rgba(255,255,255,.05);border:1px solid #444;color:var(--muted);padding:8px 14px;border-radius:999px;font-size:14px">⏳ A receber: R$ '+pendSem.toFixed(2).replace('.',',')+'</span>':'')
-    +(lastWeekTotal!=null?'<span class="badge" style="background:rgba(255,255,255,.06);border:1px solid #444;color:var(--muted);padding:8px 14px;border-radius:999px;font-size:14px">📆 Semana passada: <b style="color:var(--gold)">R$ '+lastWeekTotal.toFixed(2).replace('.',',')+'</b></span>':'')
+    +(prevTotal!=null?'<span class="badge" style="background:rgba(255,255,255,.06);border:1px solid #444;color:var(--muted);padding:8px 14px;border-radius:999px;font-size:14px">📆 Semana passada: <b style="color:var(--gold)">R$ '+prevTotal.toFixed(2).replace('.',',')+'</b></span>':'')
     +'</div>'+top;
   const rec={},pend={};
   sorted.forEach(b=>{const t=b.done?rec:pend;t[b.date]=(t[b.date]||0)+Number(b.price||0);});
@@ -633,14 +718,16 @@ function fillOld(){
 async function clearOld(){
   try{
     const latest=await getBk(); /* versão fresca do banco */
-    const oldC=latest.filter(b=>b.date<todayISO()).length;
-    if(!oldC)return alert('Não há agendamentos antigos para apagar.');
+    const alvoIds=new Set(latest.filter(b=>b.date<todayISO()).map(b=>String(b.id)));
+    const oldC=alvoIds.size;
+    if(!oldC)return alert('Não há agendamentos antigos para arquivar.');
     const naoConf=latest.filter(b=>b.date<todayISO()&&!b.done);
     const valorNC=naoConf.reduce((a,b)=>a+Number(b.price||0),0);
     const aviso=naoConf.length?'\n\n⚠️ '+naoConf.length+' deles NÃO foram confirmados (R$ '+valorNC.toFixed(2).replace('.',',')+' não contabilizado). Confirme-os antes se já foram atendidos.':'';
-    if(!confirm('Apagar '+oldC+' agendamento(s) antigo(s)? Essa ação não pode ser desfeita.'+aviso))return;
-    bookings=await bkApply(m=>{for(const k in m)if(m[k].date<todayISO())delete m[k];});
-    renderTabAg();alert('Histórico antigo apagado!');
+    if(!confirm('Arquivar '+oldC+' agendamento(s) antigo(s)? Eles sairão da agenda ativa, mas serão preservados em Archive e no backup.'+aviso))return;
+    if(!(await makeBackup('antes')))throw new Error('Backup de segurança não foi criado. Exclusão cancelada.');
+    bookings=await bkApply(m=>{for(const k in m)if(alvoIds.has(String(m[k].id))&&m[k].date<todayISO())delete m[k];},'historico');
+    renderTabAg();alert('Histórico antigo arquivado.');
   }catch(e){netErr();}
 }
 async function changeService(id,sid){
@@ -670,7 +757,10 @@ async function doneBk(id){
 async function cancelBk(id){
   if(!confirm('Cancelar este agendamento?'))return;
   try{
-    bookings=await bkApply(m=>{for(const k in m)if(String(m[k].id)===String(id))delete m[k];});
+    if(!(await makeBackup('antes')))throw new Error('Backup não disponível; cancelamento interrompido.');
+    const latest=await bkMap();
+    if(!Object.values(latest).some(b=>String(b.id)===String(id))){alert('Este agendamento já não está na agenda. Nada foi excluído.');return;}
+    bookings=await bkApply(m=>{for(const k in m)if(String(m[k].id)===String(id))delete m[k];},'cancelado');
     renderTabAg();renderPublic();renderSlots();
     alert('Agendamento cancelado.');
   }catch(e){netErr();}
@@ -697,8 +787,8 @@ function rsCheck(){
   if(date===todayISO()&&st<=new Date().getHours()*60+new Date().getMinutes()){warn.textContent='⛔ Esse horário de hoje já passou.';return false;}
   const dH=(cfg.hours&&cfg.hours.length===7)?cfg.hours[dow]:null;
   const ranges=[];const addR=(a,b)=>{const x=toMin(a||''),y=toMin(b||'');if(!isNaN(x)&&!isNaN(y)&&y>x)ranges.push([x,y]);};
-  addR((dH&&(dH.s1||dH.s))||cfg.start,(dH&&(dH.e1||dH.e))||cfg.end);
-  addR(dH&&dH.s2,dH&&dH.e2);
+  if(dH){addR(dH.s1||dH.s,dH.e1||dH.e);addR(dH.s2,dH.e2);}
+  else addR(cfg.start,cfg.end);
   if(!ranges.some(r=>st>=r[0]&&st+rsB.dur<=r[1])){warn.textContent='⛔ Fora do expediente deste dia ou não cabe antes do fechamento.';return false;}
   if(bookings.some(x=>x.id!==rsB.id&&x.date===date&&overlaps(st,st+rsB.dur,toMin(x.time),toMin(x.time)+x.dur))){warn.textContent='⛔ Já existe agendamento neste horário.';return false;}
   warn.textContent='';
@@ -732,7 +822,7 @@ function renderTabSv(){
 async function addService(){
   const n=document.getElementById('svName').value.trim(),p=parseFloat(document.getElementById('svPrice').value),d=parseInt(document.getElementById('svDur').value);
   const err=document.getElementById('svErr');
-  if(!n||!(p>0)||!(d>0)){err.innerHTML='<div class="notice err" style="margin-top:12px">Preencha nome, preço e duração válidos.</div>';return;}
+  if(!n||!Number.isFinite(p)||!(p>0)||!Number.isFinite(d)||d<5||d>240){err.innerHTML='<div class="notice err" style="margin-top:12px">Preencha nome, preço e duração válidos.</div>';return;}
   try{
     const fresh=await getSv();
     const novo=[...fresh,{id:Date.now(),name:n,price:p,dur:d}];
@@ -749,7 +839,7 @@ async function editService(id){
   const nd=prompt('Nova duração de "'+s.name+'" em minutos:',s.dur);
   if(nd===null)return;
   const p=parseFloat(np),d=parseInt(nd);
-  if(!(p>0)||!(d>=5)){alert('Valores inválidos. Preço maior que zero e duração de pelo menos 5 minutos.');return;}
+  if(!Number.isFinite(p)||!(p>0)||!Number.isFinite(d)||d<5||d>240){alert('Preço válido e duração entre 5 e 240 minutos.');return;}
   try{
     const fresh=await getSv();
     const novo=fresh.map(x=>x.id===id?{...x,price:p,dur:d}:x);
@@ -774,8 +864,8 @@ function renderTabHr(){
   const box=document.getElementById('tab-hr');
   const H=(cfg.hours&&cfg.hours.length===7)?cfg.hours:cfg.days.map(()=>({s:cfg.start,e:cfg.end})); /* compatibilidade: se ainda não tem horário por dia, usa o geral */
   const checks=cfg.days.map((v,i)=>{
-    const s1=H[i].s1||H[i].s||cfg.start, e1=H[i].e1||H[i].e||cfg.end;
-    const s2=H[i].s2||(v?'14:00':''), e2=H[i].e2||(v?'18:00':''); /* sugere 14h–18h nos dias abertos; deixe vazio para só manhã */
+    const s1=('s1' in H[i])?H[i].s1:(H[i].s||cfg.start), e1=('e1' in H[i])?H[i].e1:(H[i].e||cfg.end);
+    const s2=H[i].s2||'', e2=H[i].e2||''; /* não cria um turno da tarde que não existe */
     return '<div class="day-check" style="margin-bottom:16px">'
       +'<label style="display:block;margin-bottom:6px"><input type="checkbox" id="day'+i+'" '+(v?'checked':'')+'> <b>'+DAYS[i]+'</b></label>'
       +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-left:30px">'
@@ -792,24 +882,28 @@ async function saveHours(){
   const H=[];
   for(let i=0;i<7;i++){
     H.push({
-      s1:document.getElementById('dayS'+i).value||cfg.start,
-      e1:document.getElementById('dayE'+i).value||cfg.end,
+      s1:document.getElementById('dayS'+i).value||'',
+      e1:document.getElementById('dayE'+i).value||'',
       s2:document.getElementById('dayS2'+i).value||'',
       e2:document.getElementById('dayE2'+i).value||''
     });
   }
   try{
-    const fc=await dbGet('/cfg');if(fc===undefined)throw new Error('offline');
-    const fresh=fc||cfg;delete fresh.password; /* versão mais recente: só muda o que você editou AGORA */
-    fresh.days=[];
-    for(let i=0;i<7;i++)fresh.days[i]=document.getElementById('day'+i).checked;
-    fresh.hours=H;
-    fresh.slotMin=20; /* intervalo fixo em 20 */
-    await dbPut('/cfg',fresh);
-    cfg=fresh;
+    const days=Array.from({length:7},(_,i)=>document.getElementById('day'+i).checked);
+    for(let i=0;i<7;i++){
+      if(!days[i])continue;
+      const h=H[i],t=v=>/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(v);
+      const first=!!(h.s1||h.e1),second=!!(h.s2||h.e2);
+      if(!first&&!second)throw new Error('O dia '+DAYS[i]+' está aberto sem horário.');
+      if(first&&(!t(h.s1)||!t(h.e1)||h.e1<=h.s1))throw new Error('Primeiro período inválido em '+DAYS[i]);
+      if(second&&(!t(h.s2)||!t(h.e2)||h.e2<=h.s2))throw new Error('Segundo período inválido em '+DAYS[i]);
+      if(first&&second&&!(h.e1<=h.s2||h.e2<=h.s1))throw new Error('Períodos sobrepostos em '+DAYS[i]);
+    }
+    await dbPatch({'cfg/days':days,'cfg/hours':H,'cfg/slotMin':20});
+    cfg={...cfg,days,hours:H,slotMin:20};
     renderPublic();renderSlots();
     document.getElementById('hrMsg').innerHTML='<div class="notice ok" style="margin-top:12px">Horários salvos! Já visíveis para todos os clientes.</div>';
-  }catch(e){netErr();}
+  }catch(e){alert(e&&e.message?e.message:'Não foi possível salvar os horários.');}
 }
 
 function renderTabCfg(){
@@ -833,8 +927,8 @@ function renderTabCfg(){
     +'<small style="color:var(--muted)">Avisa neste aparelho quando um cliente agendar (Android/PC, com o painel aberto).</small>'
     +'<hr style="border:none;border-top:1px solid #333;margin:24px 0 16px">'
     +'<label>Backup da agenda</label>'
-    +'<small style="color:var(--muted)">Uma cópia da agenda é guardada sozinha 1 vez por dia (ficam os últimos 14 dias).</small>'
-    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0"><button class="btn btn-outline" style="padding:10px 18px;font-size:14px" onclick="backupNow()">💾 Salvar backup agora</button><button class="btn btn-outline" style="padding:10px 18px;font-size:14px" onclick="listBackups()">📋 Ver backups</button></div>'
+    +'<small style="color:var(--muted)">Cria uma cópia diária quando o barbeiro abre o painel. Cópias antigas não são apagadas automaticamente.</small>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0"><button class="btn btn-outline" style="padding:10px 18px;font-size:14px" onclick="backupNow()">💾 Salvar backup agora</button><button class="btn btn-outline" style="padding:10px 18px;font-size:14px" onclick="listBackups()">📋 Ver backups</button><button class="btn btn-outline" style="padding:10px 18px;font-size:14px" onclick="exportBackupJson()">⬇️ Baixar cópia (JSON)</button></div>'
     +'<div id="bkpMsg"></div><div id="bkpList"></div>';
   updateNotifBtn();
 }
@@ -850,8 +944,8 @@ async function saveCfg(){
     fresh.advanceDays=Math.max(1,Math.min(30,parseInt(document.getElementById('cfgAdv').value)||7));
     const np=document.getElementById('cfgPass').value;
     if(np){if(np.length<6){document.getElementById('cfgMsg').innerHTML='<div class="notice err" style="margin-top:12px">A senha deve ter ao menos 6 caracteres.</div>';return;}try{const rr=await fetch('https://identitytoolkit.googleapis.com/v1/accounts:update?key='+FB_API_KEY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idToken:adminTok,password:np,returnSecureToken:true})});const jj=await rr.json();if(!jj.idToken)throw 0;setTok(jj);}catch(x){document.getElementById('cfgMsg').innerHTML='<div class="notice err" style="margin-top:12px">Não foi possível trocar a senha.</div>';return;}}
-    await dbPut('/cfg',fresh);
-    cfg=fresh;
+    await dbPatch({'cfg/whatsapp':fresh.whatsapp,'cfg/instagram':fresh.instagram,'cfg/address':fresh.address,'cfg/maps':fresh.maps,'cfg/advanceDays':fresh.advanceDays});
+    cfg={...cfg,whatsapp:fresh.whatsapp,instagram:fresh.instagram,address:fresh.address,maps:fresh.maps,advanceDays:fresh.advanceDays};
     renderPublic();
     document.getElementById('cfgMsg').innerHTML='<div class="notice ok" style="margin-top:12px">Configurações salvas! Já visíveis para todos os clientes.</div>';
   }catch(e){netErr();}
@@ -876,26 +970,27 @@ async function makeBackup(tag){   /* tag: auto | manual | antes. Só COPIA; nunc
   const bk=await getBk();         /* lança erro se a rede falhar */
   const sv=await dbGet('/services');if(sv===undefined)throw new Error('offline');
   if(!bk.length)return false;     /* nunca guarda backup vazio */
-  const n=new Date(),hm=String(n.getHours()).padStart(2,'0')+String(n.getMinutes()).padStart(2,'0');
-  const id=isoDate(n)+(tag==='auto'?'':(tag==='manual'?'_manual-':'_antes-')+hm);
-  await dbPut('/backups/'+id,{at:n.toISOString(),n:bk.length,bookings:bk,services:Array.isArray(sv)?sv:(sv?Object.values(sv):[])});
+  const n=new Date();
+  const hm=String(n.getHours()).padStart(2,'0')+String(n.getMinutes()).padStart(2,'0')+String(n.getSeconds()).padStart(2,'0')+'-'+String(n.getMilliseconds()).padStart(3,'0');
+  const id=isoDate(n)+(tag==='auto'?'_auto-':(tag==='manual'?'_manual-':'_antes-'))+hm+'-'+Math.random().toString(36).slice(2,8);
+  const payload={at:n.toISOString(),n:bk.length,bookings:bk,services:Array.isArray(sv)?sv:(sv?Object.values(sv):[])};
+  if(!(await dbCreateIfAbsent('/backups/'+id,payload)))throw new Error('O identificador do backup já existe.');
+  // Verificação de leitura de volta: um backup só é considerado salvo quando confirmado.
+  const chk=await dbGet('/backups/'+id+'/n');
+  if(chk!==bk.length)throw new Error('Backup não foi confirmado.');
   return true;
-}
-async function pruneBackups(){    /* apaga SÓ backups com mais de BKP_KEEP dias (nunca mexe na agenda) */
-  const keys=await bkpKeys();if(!keys)return;
-  const lim=new Date();lim.setDate(lim.getDate()-BKP_KEEP);const cut=isoDate(lim);
-  for(const k of keys){const d=bkpDateOf(k);if(d&&d<cut)await dbPut('/backups/'+k,null);}
 }
 async function ensureDailyBackup(){   /* 1 backup automático por dia, feito pelo ADMIN. Cliente não cria backup: sem backup é melhor que backup sem nome/telefone */
   if(!adminTok)return;
   const t=todayISO();if(bkpDay===t)return;
   try{
-    const has=await dbGet('/backups/'+t+'/n');
-    if(has===undefined)return;               /* sem internet: tenta de novo depois */
-    if(has===null){
-      if(!(await makeBackup('auto'))){bkpDay=t;return;}   /* agenda vazia: nada a guardar */
-      await pruneBackups();
+    const keys=await bkpKeys();
+    if(keys===undefined)return;
+    const has=keys.some(k=>k===t||k.startsWith(t+'_auto-'));
+    if(!has){
+      if(!(await makeBackup('auto')))return; /* agenda vazia: reavaliar se entrar agendamento hoje */
     }
+    // Sem exclusão automática: os backups ficam no Firebase até revisão manual.
     bkpDay=t;
   }catch(e){}
 }
@@ -919,25 +1014,63 @@ async function listBackups(){
     const n=await dbGet('/backups/'+k+'/n');
     html+='<div class="card" style="padding:12px 16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'
       +'<div><b style="color:var(--gold)">'+esc(bkpLabel(k))+'</b><br><span style="color:var(--muted);font-size:13px">'+(typeof n==='number'?n:'?')+' agendamento(s)</span></div>'
-      +'<button class="btn btn-danger" onclick="restoreBackup(\''+k+'\')">Restaurar</button></div>';
+      +'<button class="btn btn-outline" onclick="restoreBackup(\''+k+'\')">Recuperar ausentes</button></div>';
   }
   box.innerHTML=html;
 }
 async function restoreBackup(k){
   if(!bkpKeyOk(k))return;
   try{
-    const b=await dbGet('/backups/'+k);
-    if(b===undefined){netErr();return;}
-    const list=(b&&b.bookings)?(Array.isArray(b.bookings)?b.bookings:Object.values(b.bookings)).filter(b=>b&&isSafeId(b.id)):[];
-    if(!list.length){alert('Esse backup está vazio.');return;}
-    if(!confirm('Restaurar a agenda do backup de '+bkpLabel(k)+' ('+list.length+' agendamentos)?\n\nA agenda ATUAL será substituída. Antes disso, uma cópia dela é guardada como "antes de restaurar".'))return;
-    await makeBackup('antes');          /* cópia de segurança da agenda atual (se houver) */
-    await dbPut('/bookings',list);
-    {const o={};list.forEach(b=>{o[b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};});await dbPut('/slots',o);}   /* recria os horários públicos do zero: sem "fantasmas" */
-    {const tO={};list.forEach(b=>{takenKeysFor(b.date,b.time,b.dur).forEach(tk=>{tO[tk]=takenValFor(b,tk);});});await dbPut('/taken',tO);} /* recria as travas do zero: sem trava órfã bloqueando horário livre */
-    bookings=list;renderAdmin();renderSlots();
-    alert('Agenda restaurada!');listBackups();
-  }catch(e){netErr();}
+    const saved=await dbGet('/backups/'+k);
+    if(saved===undefined)throw new Error('Sem conexão');
+    const list=(saved&&saved.bookings)?(Array.isArray(saved.bookings)?saved.bookings:Object.values(saved.bookings)).filter(b=>b&&isSafeId(b.id)):[];
+    if(!list.length)return alert('Esse backup está vazio.');
+    if(!confirm('Restaurar APENAS agendamentos ausentes deste backup?\n\nNenhum agendamento atual será substituído ou apagado. Conflitos de horário serão ignorados e informados.'))return;
+    const latest=await getBk();
+    // Se existir qualquer dado na agenda atual, guarda antes de fazer a restauração.
+    if(latest.length && !(await makeBackup('antes')))throw new Error('Backup de segurança não confirmado');
+    const held=await dbGet('/taken'),archived=await dbGet('/archive');
+    if(held===undefined||archived===undefined)throw new Error('Não foi possível verificar travas e cancelamentos');
+    const locks=held||{},archive=archived||{};
+    const ids=new Set(latest.map(x=>String(x.id)));
+    const plan=[...latest],updates={};let ignored=0,inserted=0;
+    for(const b of list){
+      if(ids.has(String(b.id))||archive[b.id]){ignored++;continue;} // nunca ressuscitar cancelado ou arquivado
+      if(!b.date||!b.time||!(Number(b.dur)>0)){ignored++;continue;}
+      const st=toMin(b.time),keys=takenKeysFor(b.date,b.time,b.dur);
+      const conflict=plan.some(x=>x.date===b.date&&overlaps(st,st+Number(b.dur),toMin(x.time),toMin(x.time)+Number(x.dur))) ||
+        keys.some(tk=>locks[tk]&&String(locks[tk].bookingId)!==String(b.id));
+      if(conflict){ignored++;continue;}
+      updates['bookings/'+b.id]=b;
+      updates['slots/'+b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};
+      keys.forEach(tk=>{updates['taken/'+tk]=takenValFor(b,tk);locks[tk]=updates['taken/'+tk];});
+      ids.add(String(b.id));plan.push(b);inserted++;
+    }
+    if(inserted)await dbPatch(updates);
+    const reread=await getBk();
+    const missed=plan.filter(b=>!reread.some(x=>String(x.id)===String(b.id))).length;
+    if(missed)throw new Error('Não foi possível conferir todos os agendamentos restaurados.');
+    bookings=reread;renderAdmin();renderSlots();
+    alert('Restauração concluída. Incluídos: '+inserted+'. Ignorados (existentes, arquivados/cancelados ou com conflito): '+ignored+'.');
+    listBackups();
+  }catch(e){console.error('Falha ao restaurar:',e);alert('Restauração interrompida. Nenhum agendamento deveria ser substituído. Confira os dados no Firebase antes de repetir.');}
+}
+
+/* Exporta backup local sem depender do Google Drive e sem modificar o banco. */
+async function exportBackupJson(){
+  try{
+    if(!adminTok)throw new Error('Faça login antes de baixar.');
+    const paths=['/bookings','/slots','/taken','/services','/cfg','/lastWeek','/archive'];
+    const vals=await Promise.all(paths.map(p=>dbGet(p)));
+    if(vals.some(v=>v===undefined))throw new Error('Falha na leitura: não criar backup incompleto');
+    const out={format:'hercules-barber-backup-v2',exportedAt:new Date().toISOString(),bookings:vals[0]||{},slots:vals[1]||{},taken:vals[2]||{},services:vals[3]||[],cfg:vals[4]||{},lastWeek:vals[5]||{},archive:vals[6]||{}};
+    delete out.cfg.password;
+    const blob=new Blob([JSON.stringify(out,null,2)],{type:'application/json'});
+    const u=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=u;a.download='hercules-backup-'+todayISO()+'.json';
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),3000);
+    const m=document.getElementById('bkpMsg');if(m)m.innerHTML='<div class="notice ok">Arquivo de backup gerado. Guarde-o em local seguro: contém dados dos clientes.</div>';
+  }catch(e){alert('Não foi possível baixar uma cópia completa. Confira a internet e entre novamente no painel.');}
 }
 
 /* ============ INIT ============ */
@@ -954,35 +1087,33 @@ function admWarn(on){
   if(!d){d=document.createElement('div');d.id='syncwarn';d.style.cssText='position:fixed;top:0;left:0;right:0;background:#c0392b;color:#fff;padding:10px;font-size:14px;text-align:center;z-index:99998';document.body.appendChild(d);}
   d.textContent='⚠️ Agenda desatualizada: sem conexão ou sessão expirada. Feche e abra o site e entre de novo.';
 }
+let refreshBusy=false;
 async function refreshBookings(){
-  let bk0;try{bk0=await getBk();}catch(e){admWarn(!!adminTok);return;}
-  admWarn(false);
-  if(adminTok){const lw=await dbGet('/lastWeek');lastWeekTotal=(lw&&typeof lw.total==='number')?lw.total:null;}
-  {
+  if(refreshBusy)return;
+  refreshBusy=true;
+  try{
+    const bk0=await getBk();
+    agendaCarregada=true;
+    const cc=await dbGet('/cfg'),ss=await dbGet('/services');
+    if(cc===undefined||ss===undefined)throw new Error('Configurações indisponíveis');
+    let changed=false;
+    const safeCfg=cc?{...cc}:null;if(safeCfg)delete safeCfg.password;
+    if(safeCfg&&JSON.stringify(safeCfg)!==JSON.stringify(cfg)){cfg=safeCfg;changed=true;}
+    if(ss){const next=Array.isArray(ss)?ss:Object.values(ss);if(JSON.stringify(next)!==JSON.stringify(services)){services=next;changed=true;}}
+    if(changed)renderPublic();
+    admWarn(false);
+    if(adminTok){
+      const lw=await dbGet('/lastWeek');
+      lastWeekTotal=(lw&&lw.week===mondayISO()&&typeof lw.total==='number')?lw.total:null;
+    }
     bookings=bk0;
     checkNewBk();
-    ensureDailyBackup();
-    /* limpeza semanal (segunda): apaga SOMENTE os atendimentos confirmados (✅) de antes desta semana.
-       Agendamentos antigos NÃO confirmados ficam guardados até você confirmar ou cancelar. */
-    if(typeof admOk!=='undefined'&&admOk){
-      const m=mondayISO();
-      if(bookings.some(b=>b.date<m&&b.done)){
-        try{
-          await ensureDailyBackup(); /* guarda uma cópia ANTES de limpar */
-          const latest=await getBk(); /* versão fresca: nunca apaga agendamento novo por engano */
-          const gone=latest.filter(b=>b.date<m&&b.done);
-          if(gone.length){
-            const kept=await bkApply(mm=>{for(const k in mm)if(mm[k].date<m&&mm[k].done)delete mm[k];});
-            const tot=gone.reduce((a,b)=>a+Number(b.price||0),0);
-            dbPut('/lastWeek',{total:tot,week:m}).catch(()=>{});
-            bookings=kept;
-          }
-        }catch(e){}
-      }
-    }
-    renderSlots(); /* atualiza a grade na hora, se o cliente estiver nela */
-    if(typeof admOk!=='undefined'&&admOk)renderTabAg(); /* atualiza só a aba de agendamentos (não apaga o que está sendo digitado nas outras abas) */
-  }
+    if(adminTok)ensureDailyBackup();
+    // Nenhum histórico é apagado automaticamente: apenas ocultado na interface.
+    renderSlots();
+    if(typeof admOk!=='undefined'&&admOk)renderTabAg();
+  }catch(e){agendaCarregada=false;renderSlots();admWarn(!!adminTok);}
+  finally{refreshBusy=false;}
 }
 function mondayISO(){const d=new Date();d.setDate(d.getDate()-((d.getDay()+6)%7));return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 /* ===== notificações de novo agendamento ===== */
