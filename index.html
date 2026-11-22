@@ -105,6 +105,16 @@ td{padding:10px;border-bottom:1px solid #2e2e2e}
 .notice.err{background:rgba(224,92,92,.1);border:1px solid rgba(224,92,92,.35);color:#e88}
 .notice.info{background:rgba(184,137,79,.08);border:1px solid rgba(184,137,79,.3);color:var(--gold-light)}
 .hidden{display:none!important}
+/* Rodapé simples, sem mapa. Horários detalhados aparecem somente se o cliente abrir. */
+.footer-hours{max-width:560px;margin:12px auto 0}
+.footer-hours summary{list-style:none;cursor:pointer;display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;color:var(--muted);font-size:14px;line-height:1.7}
+.footer-hours summary::-webkit-details-marker{display:none}
+.footer-hours summary:focus-visible{outline:2px solid var(--gold);outline-offset:5px;border-radius:4px}
+.footer-hours-more{color:var(--gold);font-weight:700;font-size:13px}
+.footer-hours[open] .footer-hours-more{font-size:0}
+.footer-hours[open] .footer-hours-more::after{content:'Fechar horários';font-size:13px}
+.footer-hours-full{white-space:pre-line;display:inline-block;text-align:left;line-height:1.9;margin:10px auto 0;padding:12px 20px;background:var(--dark);border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:13px}
+.footer-address{margin-top:16px!important;font-size:14px;color:var(--muted)}
 /* RESPONSIVE */
 @media(max-width:820px){
   .hamb{display:block}
@@ -160,7 +170,7 @@ td{padding:10px;border-bottom:1px solid #2e2e2e}
 <section id="agendar" style="background:#121212;border-top:1px solid var(--line);border-bottom:1px solid var(--line)">
   <div class="container">
     <h2 class="section-title">Agende <span class="gold-text">Online</span></h2>
-    <p class="section-sub">Escolha o serviço, a data e o horário. Sem ligações, sem espera.</p>
+    <p class="section-sub">Escolha o serviço, a data e o horário. A agenda libera os dias da semana de domingo a sábado, com novas datas todo domingo.</p>
 
     <div class="booking-wrap" id="bookingForm">
       <div class="notice info" style="margin:0 0 4px;text-align:center">⚠️ <b>Aviso!</b> Não trabalhamos com corte infantil.</div>
@@ -168,6 +178,7 @@ td{padding:10px;border-bottom:1px solid #2e2e2e}
       <select id="bkService"></select>
       <label>Data</label>
       <select id="bkDate" onchange="renderSlots()"><option value="">Selecione a data</option></select>
+      <p id="bkDateStatus" role="status" aria-live="polite" style="color:var(--muted);font-size:13px;margin-top:7px"></p>
       <label>Horário disponível</label>
       <div class="slots" id="slots"><p class="slot-empty">Selecione uma data para ver os horários.</p></div>
       <label>Seu nome</label>
@@ -199,10 +210,11 @@ td{padding:10px;border-bottom:1px solid #2e2e2e}
       <a id="footWa" target="_blank" rel="noopener" title="WhatsApp"><svg viewBox="0 0 32 32"><path d="M16 3C9.4 3 4 8.4 4 15c0 2.1.6 4.2 1.6 6L4 29l8.2-1.5c1.2.6 2.5.9 3.8.9 6.6 0 12-5.4 12-12S22.6 3 16 3zm0 22c-1.2 0-2.4-.3-3.5-.8l-.8-.4-4.9.9 1-4.7-.5-.8c-.8-1.3-1.3-2.8-1.3-4.4 0-5.5 4.5-10 10-10s10 4.5 10 10-4.4 10.2-10 10.2zm5.4-7.5c-.3-.1-1.7-.9-2-1-.3-.1-.5-.1-.7.1-.2.3-.8 1-1 1.2-.2.2-.4.2-.7.1-1.8-.9-3-1.6-4.2-3.6-.3-.6.3-.5.9-1.8.1-.2 0-.4 0-.5l-.9-2.2c-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.4s1 2.8 1.2 3c.1.2 2.1 3.2 5.1 4.5.7.3 1.3.5 1.7.6.7.2 1.4.2 1.9.1.6-.1 1.7-.7 1.9-1.4.2-.7.2-1.2.2-1.4-.1-.1-.3-.2-.6-.3z"/></svg></a>
       <a id="footIg" target="_blank" rel="noopener" title="Instagram"><svg viewBox="0 0 24 24"><path d="M12 2.2c3.2 0 3.6 0 4.8.1 1.2.1 1.8.2 2.2.4.6.2 1 .5 1.4.9.4.4.7.8.9 1.4.2.4.4 1 .4 2.2.1 1.2.1 1.6.1 4.8s0 3.6-.1 4.8c-.1 1.2-.2 1.8-.4 2.2-.2.6-.5 1-.9 1.4-.4.4-.8.7-1.4.9-.4.2-1 .4-2.2.4-1.2.1-1.6.1-4.8.1s-3.6 0-4.8-.1c-1.2-.1-1.8-.2-2.2-.4-.6-.2-1-.5-1.4-.9-.4-.4-.7-.8-.9-1.4-.2-.4-.4-1-.4-2.2-.1-1.2-.1-1.6-.1-4.8s0-3.6.1-4.8c.1-1.2.2-1.8.4-2.2.2-.6.5-1 .9-1.4.4-.4.8-.7 1.4-.9.4-.2 1-.4 2.2-.4 1.2-.1 1.6-.1 4.8-.1zm0 2.7c-3.1 0-3.5 0-4.7.1-1.1.1-1.5.2-1.9.3-.5.2-.8.4-1.1.7-.3.3-.5.6-.7 1.1-.1.4-.3.8-.3 1.9-.1 1.2-.1 1.6-.1 4.7s0 3.5.1 4.7c.1 1.1.2 1.5.3 1.9.2.5.4.8.7 1.1.3.3.6.5 1.1.7.4.1.8.3 1.9.3 1.2.1 1.6.1 4.7.1s3.5 0 4.7-.1c1.1-.1 1.5-.2 1.9-.3.5-.2.8-.4 1.1-.7.3-.3.5-.6.7-1.1.1-.4.3-.8.3-1.9.1-1.2.1-1.6.1-4.7s0-3.5-.1-4.7c-.1-1.1-.2-1.5-.3-1.9-.2-.5-.4-.8-.7-1.1-.3-.3-.6-.5-1.1-.7-.4-.1-.8-.3-1.9-.3-1.2-.1-1.6-.1-4.7-.1zm0 3.5a5.1 5.1 0 110 10.2 5.1 5.1 0 010-10.2zm0 2.7a2.4 2.4 0 100 4.8 2.4 2.4 0 000-4.8zm5.3-2.6a1.2 1.2 0 11-2.4 0 1.2 1.2 0 012.4 0z"/></svg></a>
     </div>
-    <p id="footHours"></p>
-    <p id="footAddr" style="margin-top:10px;display:none"></p>
-    <iframe title="Localização" loading="lazy" referrerpolicy="no-referrer-when-downgrade" src="https://www.google.com/maps?q=-12.152788,-39.747609&z=17&output=embed" style="width:100%;max-width:560px;height:220px;border:0;border-radius:12px;margin-top:14px"></iframe><br>
-    <a id="footMap" class="btn btn-outline" style="margin-top:14px;padding:10px 22px;font-size:14px" target="_blank" rel="noopener">📍 Como chegar</a>
+    <details class="footer-hours" id="footerHoursDetails">
+      <summary><span>🕒 Funcionamento: <span id="footHours">Consulte nossos horários</span></span><span class="footer-hours-more">Ver horários</span></summary>
+      <div id="footHoursFull" class="footer-hours-full"></div>
+    </details>
+    <p id="footAddr" class="footer-address" style="display:none"></p>
     <p style="margin-top:18px">© 2026 Hércules Barber — Todos os direitos reservados.</p>
   </div>
 </footer>
@@ -252,10 +264,10 @@ window.addEventListener('error',function(e){
 </script><script>
 /* ============ FIREBASE (banco de dados compartilhado) ============ */
 const DB='https://hercules-barber-default-rtdb.firebaseio.com';
-const MAPS_DEFAULT='https://maps.app.goo.gl/isfQtbfU3AXQ42oN8';
 const FB_API_KEY='AIzaSyBZmYWCEKkDSq8mZa1M2HuTnemH4hNOToc', ADMIN_EMAIL='Jv55241@gmail.com';
 // O servidor autoriza somente a conta administrativa autenticada por e-mail e senha.
 let adminTok=null,adminRef=null,adminExp=0;
+let adminSessionVersion=0; // invalida leituras administrativas antigas após sair
 function setTok(j){adminTok=j.idToken||j.id_token;adminRef=j.refreshToken||j.refresh_token;adminExp=Date.now()+Number(j.expiresIn||j.expires_in)*1000;}
 async function authQ(){
   if(!adminTok)return '';
@@ -266,8 +278,22 @@ async function authQ(){
   return 'auth='+encodeURIComponent(adminTok);
 }
 const dbUrl=async p=>{const q=await authQ();return DB+p+'.json'+(q?'?'+q:'');};
+// Campos públicos permitidos em /cfg; a leitura integral é exclusiva do administrador.
+const PUBLIC_CFG_FIELDS=['whatsapp','instagram','start','end','slotMin','days','hours','dateOverrides','address','maps','advanceDays','scheduleRev'];
 async function dbGet(path){
   /* erro de rede/permissão => undefined | banco vazio => null */
+  if(path==='/cfg'&&!adminTok){
+    try{
+      const entries=await Promise.all(PUBLIC_CFG_FIELDS.map(async k=>{
+        const res=await fetch(await dbUrl('/cfg/'+k));
+        if(!res.ok)throw new Error('Leitura pública bloqueada: '+k);
+        return [k,await res.json()];
+      }));
+      const cfgPublic={};
+      entries.forEach(([k,v])=>{if(v!==null)cfgPublic[k]=v;});
+      return Object.keys(cfgPublic).length?cfgPublic:null;
+    }catch(e){return undefined;}
+  }
   try{const r=await fetch(await dbUrl(path));if(!r.ok)return undefined;return await r.json();}
   catch(e){return undefined;}
 }
@@ -275,9 +301,9 @@ async function dbGet(path){
 async function getBk(){
   const l=await dbGet(adminTok?'/bookings':'/slots');
   if(l===undefined)throw new Error('offline');
-  if(Array.isArray(l))return l.filter(b=>b&&isSafeId(b.id));
+  if(Array.isArray(l))return l.filter(b=>b&&isSafeId(b.id)&&b.status!=='cancelled');
   if(!l)return [];
-  return Object.entries(l).filter(([k,b])=>b&&isSafeId(k)&&isSafeId(b.id)).map(([,b])=>b); /* ignora registro com id fora do padrão: mesmo o que já está no banco não chega ao painel nem ao onclick */
+  return Object.entries(l).filter(([k,b])=>b&&isSafeId(k)&&isSafeId(b.id)&&b.status!=='cancelled').map(([,b])=>b); /* ignora registro com id fora do padrão: mesmo o que já está no banco não chega ao painel nem ao onclick */
 }
 async function dbPatch(val){
   const r=await fetch(await dbUrl('/'),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(val)});
@@ -308,6 +334,12 @@ async function syncSlots(list){
   for(const key of Object.keys(slots0))if(!knownIDs.has(String(key)))issues++;
   for(const key of Object.keys(taken0))if(!expectedTaken.has(key)||expectedTaken.get(key)!==String(taken0[key]?.bookingId))issues++;
   for(const b of valid){
+    // Não recriar registros temporários históricos após eventual retenção
+    // autorizada. É somente uma decisão de reparação: não exclui nada.
+    const fimAntigo=retentionDayNumber(b.date);
+    const hojeRetencao=retentionDayNumber(todayISO());
+    if(b.done===true&&b.status!=='cancelled'&&fimAntigo!==null&&hojeRetencao!==null&&
+       hojeRetencao-fimAntigo>RETENTION_REVIEW_POLICY.attendedDays)continue;
     const slot={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};
     if(slots0[b.id]){
       if(slots0[b.id].date!==b.date||slots0[b.id].time!==b.time||Number(slots0[b.id].dur)!==Number(b.dur))issues++;
@@ -327,29 +359,43 @@ async function syncSlots(list){
 async function bkMap(){
   const l=await dbGet('/bookings');if(l===undefined)throw new Error('offline');
   const m={};
-  if(Array.isArray(l))l.forEach((b,i)=>{if(b&&isSafeId(b.id))m[i]=b;});else Object.entries(l||{}).forEach(([k,b])=>{if(b&&isSafeId(k)&&isSafeId(b.id))m[k]=b;});
+  if(Array.isArray(l))l.forEach((b,i)=>{if(b&&isSafeId(b.id)&&b.status!=='cancelled')m[i]=b;});else Object.entries(l||{}).forEach(([k,b])=>{if(b&&isSafeId(k)&&isSafeId(b.id)&&b.status!=='cancelled')m[k]=b;});
   return m;
 }
 let adminBookingEdit=false;
-async function bkApply(fn,reason='cancelado'){
+async function bkApply(fn,reason='edicao'){
   if(adminBookingEdit)throw new Error('Outra alteração está em andamento.');
   adminBookingEdit=true;
   try{
   const m=await bkMap(),next=JSON.parse(JSON.stringify(m));fn(next);
+  // Segurança: nenhum comando pode apagar vários agendamentos numa só ação.
+  const removed=Object.keys(m).filter(k=>!Object.prototype.hasOwnProperty.call(next,k) || !next[k]);
+  if(removed.length>1)throw new Error('Proteção: exclusão múltipla bloqueada. Nenhum agendamento foi alterado.');
+  if(removed.length&&reason!=='cancelado')throw new Error('Proteção: exclusão sem cancelamento confirmado.');
   const upd={};
   for(const k in m){
-    if(!next[k]){const old=m[k];upd['archive/'+old.id]={...old,archivedAt:Date.now(),reason:reason};upd['bookings/'+k]=null;upd['slots/'+old.id]=null;takenKeysFor(old.date,old.time,old.dur).forEach(tk=>{upd['taken/'+tk]=null;});} /* apagar booking apaga a trava junto, no mesmo PATCH */
-    else if(JSON.stringify(next[k])!==JSON.stringify(m[k])){const b=next[k],old=m[k];upd['bookings/'+k]=b;upd['slots/'+b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};if(old.date!==b.date||old.time!==b.time||old.dur!==b.dur){const oK=takenKeysFor(old.date,old.time,old.dur),nK=takenKeysFor(b.date,b.time,b.dur);oK.forEach(tk=>{if(!nK.includes(tk))upd['taken/'+tk]=null;});nK.forEach(tk=>{upd['taken/'+tk]=takenValFor(b,tk);});}} /* só mexe na trava se data/hora/duração mudou: done=true não toca na trava */
+    if(!next[k]){const old=m[k];const cancelledAt=Date.now();old.lockStart=old.lockStart||takenKeysFor(old.date,old.time,old.dur)[0]?.split('_')[1]||old.time;upd['archive/'+old.id]={...old,archivedAt:cancelledAt,reason:reason};upd['bookings/'+k]={...old,status:'cancelled',cancelledAt,rev:(Number(old.rev)||0)+1};upd['slots/'+old.id]=null;takenKeysFor(old.date,old.time,old.dur).forEach(tk=>{upd['taken/'+tk]=null;});} /* apagar booking apaga a trava junto, no mesmo PATCH */
+    else if(JSON.stringify(next[k])!==JSON.stringify(m[k])){const b=next[k],old=m[k];b.rev=(Number(old.rev)||0)+1;b.lockStart=takenKeysFor(b.date,b.time,b.dur)[0]?.split('_')[1]||b.time;upd['bookings/'+k]=b;upd['slots/'+b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};if(old.date!==b.date||old.time!==b.time||old.dur!==b.dur){const oK=takenKeysFor(old.date,old.time,old.dur),nK=takenKeysFor(b.date,b.time,b.dur);oK.forEach(tk=>{if(!nK.includes(tk))upd['taken/'+tk]=null;});nK.forEach(tk=>{upd['taken/'+tk]=takenValFor(b,tk);});}} /* só mexe na trava se data/hora/duração mudou: done=true não toca na trava */
   }
-  for(const k in next){if(!m[k]){const b=next[k];upd['bookings/'+k]=b;upd['slots/'+b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};takenKeysFor(b.date,b.time,b.dur).forEach(tk=>{upd['taken/'+tk]=takenValFor(b,tk);});}}
+  for(const k in next){if(!m[k]){const b=next[k];b.rev=0;b.lockStart=takenKeysFor(b.date,b.time,b.dur)[0]?.split('_')[1]||b.time;upd['bookings/'+k]=b;upd['slots/'+b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};takenKeysFor(b.date,b.time,b.dur).forEach(tk=>{upd['taken/'+tk]=takenValFor(b,tk);});}}
   if(Object.keys(upd).length)await dbPatch(upd);
   return Object.values(next);
   }finally{adminBookingEdit=false;}
 }
 async function dbPut(path,val){
-  const r=await fetch(await dbUrl(path),{method:'PUT',body:JSON.stringify(val)});
-  if(!r.ok)throw new Error('Falha ao salvar');
-  if(path==='/bookings'&&adminTok)await syncSlots(val);
+  // Evita sobrescrever alterações recentes em serviços (REST CAS com ETag).
+  // A agenda nunca é substituída integralmente via PUT.
+  if(path!=='/services')throw new Error('Proteção: substituição integral bloqueada para '+path);
+  const url=await dbUrl(path);
+  const current=await fetch(url,{headers:{'X-Firebase-ETag':'true'}});
+  if(!current.ok)throw new Error('Não foi possível consultar a versão atual dos serviços.');
+  const etag=current.headers.get('etag');
+  const previous=await current.json();
+  if(!etag||JSON.stringify(previous||[])!==JSON.stringify(services))
+    throw new Error('Os serviços foram alterados por outra sessão. Atualize o painel antes de salvar.');
+  const r=await fetch(url,{method:'PUT',headers:{'Content-Type':'application/json','if-match':etag},body:JSON.stringify(val)});
+  if(r.status===412)throw new Error('Conflito: os serviços mudaram em outra sessão. Atualize o painel.');
+  if(!r.ok)throw new Error('Falha ao salvar serviços ('+r.status+').');
   return r.json();
 }
 async function getSv(){
@@ -359,6 +405,13 @@ async function getSv(){
 }
 function netErr(){alert('Sem conexão com a internet agora. Tente novamente em instantes.');}
 
+// Firebase may return object keys in a different order; that alone is NOT a configuration change.
+function canonicalData(v){
+  if(Array.isArray(v))return v.map(canonicalData);
+  if(v&&typeof v==='object')return Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonicalData(v[k])]));
+  return v;
+}
+const sameData=(a,b)=>JSON.stringify(canonicalData(a))===JSON.stringify(canonicalData(b));
 const DAYS=['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
 let cfg={whatsapp:'75992112361',instagram:'https://www.instagram.com/herculesoficial_barber',start:'08:00',end:'18:00',slotMin:20,
   days:[false,true,true,true,true,true,true],
@@ -391,14 +444,80 @@ function waClient(phone,msg){
   return 'https://wa.me/'+n+(msg?'?text='+encodeURIComponent(msg):'');
 }
 
+/* ========== EXPEDIENTE ESPECIAL POR DATA ========== */
+/* Overrides são SOMENTE configurações públicas, nunca alteram /bookings, /slots ou /taken.
+   mode=open permite abrir dia normalmente fechado ou trocar os períodos de um dia aberto.
+   mode=closed fecha somente a data escolhida; sem override vale o expediente semanal. */
+const hmValid=v=>/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(String(v||''));
+function dateOverrideFor(date,configuration=cfg){
+  const all=configuration&&configuration.dateOverrides;
+  if(!all||typeof all!=='object'||Array.isArray(all))return null;
+  const rule=all[date];
+  if(!rule||typeof rule!=='object')return null;
+  if(rule.mode==='closed')return {mode:'closed'};
+  if(rule.mode==='open')return {mode:'open',s1:rule.s1||'',e1:rule.e1||'',s2:rule.s2||'',e2:rule.e2||''};
+  return null;
+}
+function dailySchedule(date,configuration=cfg){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(date||'')))return {open:false,ranges:[]};
+  const dow=new Date(date+'T12:00:00').getDay();
+  if(!Number.isFinite(dow))return {open:false,ranges:[]};
+  const special=dateOverrideFor(date,configuration);
+  if(special?.mode==='closed')return {open:false,ranges:[],special:true};
+  const openDays=Array.isArray(configuration.days)&&configuration.days.length===7?configuration.days:[false,true,true,true,true,true,true];
+  if(!special&&!openDays[dow])return {open:false,ranges:[],special:false};
+  const h=special?.mode==='open'?special:(Array.isArray(configuration.hours)&&configuration.hours.length===7?configuration.hours[dow]:null);
+  const ranges=[];
+  const add=(a,b)=>{if(!hmValid(a)||!hmValid(b))return;const st=toMin(a),en=toMin(b);if(en>st)ranges.push([st,en]);};
+  if(h){add(h.s1||h.s,h.e1||h.e);add(h.s2,h.e2);}else add(configuration.start,configuration.end);
+  return {open:ranges.length>0,ranges,special:!!special};
+}
+function bookingFitsSchedule(b,configuration){
+  if(!b||!/^\d{4}-\d{2}-\d{2}$/.test(b.date||'')||!hmValid(b.time)||!Number.isFinite(Number(b.dur))||Number(b.dur)<=0)return false;
+  const sch=dailySchedule(b.date,configuration);
+  const st=toMin(b.time),end=st+Number(b.dur);
+  return sch.open&&sch.ranges.some(([a,z])=>st>=a&&end<=z);
+}
+async function getAllActiveBookingRecords(){
+  if(!adminTok)throw new Error('Entre na área do barbeiro para editar horários.');
+  const raw=await dbGet('/bookings');
+  if(raw===undefined)throw new Error('Não foi possível conferir todos os agendamentos. Nada foi alterado.');
+  return (Array.isArray(raw)?raw:Object.values(raw||{})).filter(b=>b&&b.status!=='cancelled');
+}
+function validateSpecialPeriods(v){
+  const a=!!(v.s1||v.e1),b=!!(v.s2||v.e2);
+  if(!a&&!b)throw new Error('Informe pelo menos um período de atendimento.');
+  if(a&&(!hmValid(v.s1)||!hmValid(v.e1)||v.e1<=v.s1))throw new Error('Horário inicial/final do primeiro período inválido.');
+  if(b&&(!hmValid(v.s2)||!hmValid(v.e2)||v.e2<=v.s2))throw new Error('Horário inicial/final do segundo período inválido.');
+  if(a&&b&&!(v.e1<=v.s2||v.e2<=v.s1))throw new Error('Os períodos de atendimento não podem se sobrepor.');
+  return true;
+}
+/* Salva APENAS um dia com verificação condicional de ETag.
+   Nunca grava a coleção de agendamentos nem reescreve cfg inteiro. */
+async function putSpecialDateConditional(date,value){
+  const url=await dbUrl('/cfg/dateOverrides/'+date);
+  const read=await fetch(url,{headers:{'X-Firebase-ETag':'true'}});
+  if(!read.ok)throw new Error('Não foi possível verificar a configuração no Firebase.');
+  const etag=read.headers.get('etag');
+  if(!etag)throw new Error('Firebase não forneceu controle de versão; nada foi alterado.');
+  const current=await read.json();
+  const initial=dateOverrideFor(date);
+  if(JSON.stringify(current||null)!==JSON.stringify(initial||null))throw new Error('Esta data foi alterada em outra sessão. Atualize o site e tente novamente.');
+  const res=await fetch(url,{method:'PUT',headers:{'Content-Type':'application/json','if-match':etag},body:JSON.stringify(value)});
+  if(res.status===412)throw new Error('Conflito: outra sessão alterou esta data. Atualize e confira antes de salvar.');
+  if(!res.ok)throw new Error('Firebase recusou a alteração do dia ('+res.status+'). Nenhum agendamento foi excluído.');
+}
+
 /* ============ BOOT: carrega dados do banco ============ */
 async function boot(){
+  const version=adminSessionVersion;
   const c=await dbGet('/cfg'),sv=await dbGet('/services');
+  if(version!==adminSessionVersion)return;
   if(c===undefined||sv===undefined){agendaCarregada=false;renderPublic();renderSlots();return;}
   if(c){cfg=c;delete cfg.password;}
   const sl=Array.isArray(sv)?sv:Object.values(sv||{});
   if(sl.length)services=sl.filter(Boolean);
-  try{bookings=await getBk();agendaCarregada=true;}catch(e){agendaCarregada=false;}
+  try{const loaded=await getBk();if(version!==adminSessionVersion)return;bookings=loaded;agendaCarregada=true;}catch(e){if(version!==adminSessionVersion)return;agendaCarregada=false;}
   renderPublic();renderSlots();
 }
 
@@ -407,8 +526,10 @@ const svcOk=()=>services.filter(x=>x&&x.name&&String(x.name).trim());
 function renderPublic(){
   document.getElementById('servicesGrid').innerHTML=svcOk().map(s=>
     `<div class="card"><h3>${esc(s.name)}</h3><div class="price gold-text">R$ ${Number(s.price).toFixed(2).replace('.',',')}</div><div class="dur">⏱ ${s.dur} minutos</div></div>`).join('');
+  const selectedService=document.getElementById('bkService').value;
   document.getElementById('bkService').innerHTML=svcOk().map(s=>
     `<option value="${esc(s.id)}">${esc(s.name)} — R$ ${Number(s.price).toFixed(2).replace('.',',')} (${Number(s.dur)}min)</option>`).join('');
+  if(selectedService&&Array.from(document.getElementById('bkService').options).some(o=>o.value===selectedService))document.getElementById('bkService').value=selectedService;
   fillDates();
   const wa=waLink('Olá! Vim pelo site do Hércules Barber e gostaria de mais informações.');
   document.getElementById('floatWa').href=wa;
@@ -416,31 +537,103 @@ function renderPublic(){
   document.getElementById('footIg').href=cfg.instagram||'#';
   const ad=String(cfg.address||'').trim(),fa=document.getElementById('footAddr');
   fa.innerHTML=ad?'📍 '+esc(ad):'';fa.style.display=ad?'block':'none';
-  document.getElementById('footMap').href=cfg.maps||MAPS_DEFAULT;
-  const resumoHoras=(cfg.days||[]).map((aberto,i)=>{
-    if(!aberto)return null;
+  // Rodapé compacto: resumo dos dias abertos e detalhes opcionais, sem Google Maps.
+  // Esta rotina só escreve na interface; não altera dados do Firebase.
+  const diasAbertos=(Array.isArray(cfg.days)?cfg.days:[]).flatMap((aberto,i)=>aberto?[i]:[]);
+  const nomes=diasAbertos.map(i=>DAYS[i].slice(0,3));
+  const consecutivos=diasAbertos.every((d,i)=>i===0||d===diasAbertos[i-1]+1);
+  const resumo=diasAbertos.length===7?'Todos os dias'
+    :diasAbertos.length>=3&&consecutivos?nomes[0]+' a '+nomes[nomes.length-1]
+    :nomes.length>1?nomes.slice(0,-1).join(', ')+' e '+nomes[nomes.length-1]
+    :nomes[0]||'Horários a confirmar';
+  const horaCurta=t=>{
+    const m=/^(\d{1,2}):(\d{2})$/.exec(String(t||''));
+    return m?Number(m[1])+'h'+(m[2]==='00'?'':m[2]):String(t||'');
+  };
+  const linhas=diasAbertos.map(i=>{
     const h=(Array.isArray(cfg.hours)&&cfg.hours[i])||null;
     const periodos=[];
-    if(h){if((h.s1||h.s)&&(h.e1||h.e))periodos.push((h.s1||h.s)+'–'+(h.e1||h.e));if(h.s2&&h.e2)periodos.push(h.s2+'–'+h.e2);}
-    else periodos.push(cfg.start+'–'+cfg.end);
-    return DAYS[i].slice(0,3)+': '+(periodos.join(' e ')||'consulte horários');
-  }).filter(Boolean);
-  document.getElementById('footHours').textContent='Funcionamento: '+resumoHoras.join(' | ');
+    if(h){
+      if((h.s1||h.s)&&(h.e1||h.e))periodos.push(horaCurta(h.s1||h.s)+'–'+horaCurta(h.e1||h.e));
+      if(h.s2&&h.e2)periodos.push(horaCurta(h.s2)+'–'+horaCurta(h.e2));
+    }else if(cfg.start&&cfg.end)periodos.push(horaCurta(cfg.start)+'–'+horaCurta(cfg.end));
+    return DAYS[i].slice(0,3)+': '+(periodos.join(' · ')||'Consulte os horários');
+  });
+  document.getElementById('footHours').textContent=resumo;
+  document.getElementById('footHoursFull').textContent=linhas.join('\n')||'Horários a confirmar';
 }
-/* datas liberadas: só os próximos N dias (padrão 7), apenas dias em que a barbearia atende */
-const ADV=()=>Math.max(1,Math.min(30,Number(cfg.advanceDays)||7));
+/* Agenda SEMANAL: de domingo até sábado, sem liberar datas da semana seguinte.
+   Uma nova semana passa a aparecer automaticamente no domingo, sem excluir agendamentos. */
+function endOfBookingWeek(now=new Date()){
+  const saturday=new Date(now.getFullYear(),now.getMonth(),now.getDate(),12);
+  saturday.setDate(saturday.getDate()+6-saturday.getDay());
+  return isoDate(saturday);
+}
+function isBookableWeekDate(date,now=new Date()){
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) && date>=isoDate(now) && date<=endOfBookingWeek(now);
+}
+/* Grade única de horários: o calendário e a lista de horários usam exatamente
+   o MESMO cálculo, evitando exibir "sem vagas" quando ainda há um horário válido.
+   Não grava nem exclui dados: utiliza apenas o que já foi carregado do Firebase. */
+function slotGridForDate(date,service,now=new Date()){
+  if(!agendaCarregada)return null; // falha de conexão NÃO significa agenda lotada
+  if(!service||!Number.isFinite(Number(service.dur))||Number(service.dur)<5)return [];
+  if(!isBookableWeekDate(date,now))return [];
+  const schedule=dailySchedule(date);
+  if(!schedule.open)return [];
+  const ranges=schedule.ranges;
+  const dur=Number(service.dur);
+  const busy=(bookings||[]).filter(b=>b&&b.date===date&&/^\d{2}:\d{2}$/.test(b.time||'')&&Number(b.dur)>0);
+  const step=dur%20===0?20:(dur%10===0?10:5);
+  const today=date===isoDate(now),currentMin=now.getHours()*60+now.getMinutes();
+  const grid=[];
+  let blockUntil=-1;
+  for(const [a,b] of ranges){
+    for(let t=a;t+dur<=b;t+=step){
+      const hit=busy.some(x=>overlaps(t,t+dur,toMin(x.time),toMin(x.time)+Number(x.dur)));
+      const passed=today&&t<=currentMin;
+      const off=hit||t<blockUntil||passed;
+      if(!off)blockUntil=t+dur;
+      grid.push({t,off,hit});
+    }
+  }
+  return grid;
+}
 function fillDates(){
   const d=document.getElementById('bkDate'),cur=d.value;
-  const open=(Array.isArray(cfg.days)&&cfg.days.length===7)?cfg.days:[0,1,1,1,1,1,1];
+  const status=document.getElementById('bkDateStatus');
+  const open=(Array.isArray(cfg.days)&&cfg.days.length===7)?cfg.days:[false,true,true,true,true,true,true];
   const WD=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
-  let h='<option value="">Selecione a data</option>';
-  for(let i=0;i<ADV();i++){
-    const x=new Date();x.setDate(x.getDate()+i);
-    if(!open[x.getDay()])continue;
+  const today=new Date(),last=endOfBookingWeek(today);
+  const service=svc(document.getElementById('bkService').value);
+  d.replaceChildren(new Option('Selecione a data',''));
+  const noSlots=[];
+  let availableDays=0;
+  for(let i=0;i<7;i++){
+    const x=new Date(today.getFullYear(),today.getMonth(),today.getDate()+i,12);
     const iso=isoDate(x);
-    h+='<option value="'+iso+'">'+WD[x.getDay()]+', '+iso.slice(8)+'/'+iso.slice(5,7)+(i===0?' (hoje)':'')+'</option>';
+    if(iso>last)break;
+    const schedule=dailySchedule(iso);
+    const special=dateOverrideFor(iso);
+    if(!open[x.getDay()]&&!special)continue; // dias normalmente fechados continuam ocultos, exceto com exceção explícita
+    const label=WD[x.getDay()]+', '+iso.slice(8)+'/'+iso.slice(5,7)+(i===0?' (hoje)':'');
+    const grid=slotGridForDate(iso,service,today);
+    const closed=!schedule.open;
+    const full=closed||(grid!==null&&!grid.some(g=>!g.off));
+    const option=new Option(label+(closed?' — ⛔ Fechado':full?' — ⛔ Sem vagas':''),iso);
+    option.disabled=full;
+    d.add(option);
+    if(full&&!closed)noSlots.push(label);
+    else if(grid!==null)availableDays++;
   }
-  d.innerHTML=h;if(cur)d.value=cur;
+  if(cur&&Array.from(d.options).some(opt=>opt.value===cur&&!opt.disabled))d.value=cur;
+  else {d.value='';selSlot=null;} // dia lotado não continua selecionado
+  if(status){
+    if(!agendaCarregada)status.textContent='⚠️ Não foi possível verificar as vagas. Confira sua conexão.';
+    else if(availableDays===0)status.textContent='⛔ Não há datas com vagas para este serviço nesta semana. Confira novamente mais tarde.';
+    else if(noSlots.length)status.textContent='⛔ Sem vagas: '+noSlots.join('; ')+'. Selecione uma data disponível.';
+    else status.textContent='Datas disponíveis conforme o serviço escolhido.';
+  }
 }
 function closeMenu(){document.getElementById('navLinks').classList.remove('open')}
 
@@ -448,61 +641,29 @@ function closeMenu(){document.getElementById('navLinks').classList.remove('open'
 let selSlot=null;
 function renderSlots(){
   const box=document.getElementById('slots');
-  const prevSel=selSlot; /* guarda a escolha do cliente para não perder ao atualizar */
-  box.innerHTML='';selSlot=null;
+  const prevSel=selSlot;
+  box.replaceChildren();selSlot=null;
   const date=document.getElementById('bkDate').value;
-  if(!date){box.innerHTML='<p class="slot-empty">Selecione uma data para ver os horários.</p>';return;}
+  if(!date){box.innerHTML='<p class="slot-empty">Selecione uma data disponível para ver os horários.</p>';return;}
+  if(!isBookableWeekDate(date)){box.innerHTML='<p class="slot-empty">Esta data ainda não está liberada. A próxima semana abre no domingo.</p>';return;}
   if(!agendaCarregada){box.innerHTML='<p class="slot-empty">⚠️ Não foi possível carregar a agenda. Verifique sua internet antes de agendar.</p>';return;}
-  const dow=new Date(date+'T12:00:00').getDay();
-  const daysOpen=(Array.isArray(cfg.days)&&cfg.days.length===7)?cfg.days:[1,1,1,1,1,1,0];
-  if(!daysOpen[dow]){box.innerHTML='<p class="slot-empty">⛔ Não atendemos neste dia. Escolha outra data.</p>';return;}
-  const s=svc(document.getElementById('bkService').value)||{dur:40,name:'Corte'};
-  const HrDia=(cfg.hours&&cfg.hours.length===7)?cfg.hours:null; /* períodos individuais por dia */
-  const dH=HrDia?HrDia[dow]:null;
-  const ranges=[];
-  const addR=(a,b)=>{const x=toMin(a||''),y=toMin(b||'');if(!isNaN(x)&&!isNaN(y)&&y>x)ranges.push([x,y]);};
-  if(dH){addR(dH.s1||dH.s,dH.e1||dH.e);addR(dH.s2,dH.e2);}
-  else addR(cfg.start,cfg.end); /* sem turnos por dia, usa expediente geral */ /* período 2 (tarde) — opcional; o vão entre os períodos é o almoço */
-  const dayBk=(bookings||[]).filter(b=>b&&b.date===date&&!isNaN(toMin(b.time||''))&&b.dur>0);
-  /* GRADE DINÂMICA: passo ajustado à duração do serviço — múltiplo maior
-     de 20/10/5 que divide a duração. Ex.: Corte(40) e Corte+Barba(60) usam
-     grade de 20min (visual limpo); Barba(30)/Luzes(90) de 10min;
-     Sobrancelha(15) de 5min. O encaixe automático (blockUntil) espaça os
-     horários pela duração — nada se sobrepõe e os vãos são aproveitados. */
-  const step=s.dur%20===0?20:(s.dur%10===0?10:5);
-  /* monta a grade primeiro, depois calcula as estrelas */
-  const grid=[];
-  let blockUntil=-1; /* fim do último horário aceito: impede que dois horários oferecidos se sobreponham */
-  const ehHoje=date===todayISO();
-  const agora=new Date();
-  const agoraMin=agora.getHours()*60+agora.getMinutes(); /* horário de agora em minutos */
-  for(const rg of ranges){
-    for(let t=rg[0];t<=rg[1];t+=step){
-      if(t+s.dur>rg[1])break; /* ⛔ o serviço precisa terminar antes do fim do período */
-      /* riscado se: encosta em um agendamento existente OU começa antes do fim do horário anterior oferecido */
-      const hit=dayBk.some(b=>overlaps(t,t+s.dur,toMin(b.time),toMin(b.time)+b.dur));
-      const passou=ehHoje&&t<=agoraMin; /* ⛔ hoje: horário que já passou não pode ser marcado */
-      const off=hit||t<blockUntil||passou;
-      if(!off)blockUntil=t+s.dur;
-      grid.push({t,off,hit});
-    }
-  }
-  if(!grid.length){box.innerHTML='<p class="slot-empty">⛔ Não atendemos neste dia. Escolha outra data.</p>';return;}
+  const service=svc(document.getElementById('bkService').value);
+  const grid=slotGridForDate(date,service);
+  if(!grid||!grid.length){box.innerHTML='<p class="slot-empty">⛔ Não há horários de atendimento disponíveis nesta data.</p>';return;}
   let any=false;
   grid.forEach(g=>{
-    if(g.off&&!g.hit)return; /* esconde riscados de espaçamento: tela limpa, só aparecem livres e horários ocupados de verdade */
-    const d=document.createElement('div');
-    d.className='slot'+(g.off?' off':'');
+    if(g.off&&!g.hit)return; // mantém o comportamento visual anterior
+    const item=document.createElement('div');
+    item.className='slot'+(g.off?' off':'');
+    item.textContent=toHM(g.t);
     if(!g.off){
-      d.textContent=toHM(g.t);
-      d.onclick=()=>{box.querySelectorAll('.slot').forEach(x=>x.classList.remove('sel'));d.classList.add('sel');selSlot=toHM(g.t);};
-      if(prevSel===toHM(g.t)){d.classList.add('sel');selSlot=prevSel;} /* mantém o horário escolhido mesmo após atualização automática */
+      item.onclick=()=>{box.querySelectorAll('.slot').forEach(x=>x.classList.remove('sel'));item.classList.add('sel');selSlot=toHM(g.t);};
+      if(prevSel===toHM(g.t)){item.classList.add('sel');selSlot=prevSel;}
       any=true;
     }
-    else d.textContent=toHM(g.t);
-    box.appendChild(d);
+    box.appendChild(item);
   });
-  if(!any){box.innerHTML='<p class="slot-empty">Sem horários disponíveis nesta data.</p>';return;}
+  if(!any)box.innerHTML='<p class="slot-empty">Sem horários disponíveis nesta data.</p>';
 }
 
 /* ============ BOOKING ============ */
@@ -518,10 +679,12 @@ async function submitBooking(){
   const fail=m=>err.innerHTML='<div class="notice err" style="margin-top:14px">'+m+'</div>';
   if(!s||!Number.isFinite(Number(s.dur))||Number(s.dur)<5)return fail('Serviço inválido. Atualize o site e tente novamente.');
   if(!date)return fail('Selecione a data do atendimento.');
-  if(date<todayISO())return fail('Não é possível agendar em datas passadas.');
-  {const lim=new Date();lim.setDate(lim.getDate()+ADV()-1);if(date>isoDate(lim))return fail('Agendamento disponível apenas para os próximos '+ADV()+' dias.');}
-  if(!cfg.days[new Date(date+'T12:00:00').getDay()])return fail('Não atendemos neste dia da semana.');
+  if(!isBookableWeekDate(date))return fail('Agendamentos liberados somente até sábado. A semana seguinte abre no domingo.');
+  if(!dailySchedule(date).open)return fail('Esta data está fechada ou sem expediente configurado.');
   if(!selSlot)return fail('Escolha um horário disponível.');
+  // Congela o horário confirmado antes de qualquer operação assíncrona.
+  // Alterações na tela durante a espera não modificam este pedido.
+  const chosenTime=selSlot;
   if(!name)return fail('Informe seu nome.');
   {const dg=phone.replace(/\D/g,'').length;if(dg<10||dg>11)return fail('Informe um WhatsApp válido com DDD.');}
   savingBk=true;
@@ -532,7 +695,7 @@ async function submitBooking(){
   const latestSv=Array.isArray(currentSv)?currentSv:Object.values(currentSv||{});
   const publicCfg=currentCfg?{...currentCfg}:null;
   if(publicCfg)delete publicCfg.password; // campo legado privado não altera o expediente
-  if((publicCfg&&JSON.stringify(publicCfg)!==JSON.stringify(cfg)) || JSON.stringify(latestSv)!==JSON.stringify(services)){
+  if((publicCfg&&!sameData(publicCfg,cfg)) || !sameData(latestSv,services)){
     if(publicCfg)cfg=publicCfg;
     services=latestSv;
     renderPublic();renderSlots();savingBk=false;
@@ -541,56 +704,70 @@ async function submitBooking(){
   /* busca a versão mais recente dos agendamentos antes de gravar */
   let list;
   try{list=await getBk();}catch(e){savingBk=false;netErr();return;}
-  const st=toMin(selSlot);
+  const st=toMin(chosenTime);
   const dowBk=new Date(date+'T12:00:00').getDay();
   if(date===todayISO()){
     const ag=new Date();
     if(st<=ag.getHours()*60+ag.getMinutes()){savingBk=false;return fail('⛔ Este horário já passou. Escolha um horário futuro.');}
   }
-  const HrBk=(cfg.hours&&cfg.hours.length===7)?cfg.hours:null;
-  const dHB=HrBk?HrBk[dowBk]:null;
-  const rangesBk=[];
-  const addRB=(a,b)=>{const x=toMin(a||''),y=toMin(b||'');if(!isNaN(x)&&!isNaN(y)&&y>x)rangesBk.push([x,y]);};
-  if(dHB){addRB(dHB.s1||dHB.s,dHB.e1||dHB.e);addRB(dHB.s2,dHB.e2);}
-  else addRB(cfg.start,cfg.end);
+  const rangesBk=dailySchedule(date).ranges;
   if(!rangesBk.some(r=>st>=r[0]&&st+s.dur<=r[1])){savingBk=false;return fail('⛔ Fora do expediente deste dia (ou não cabe antes do fechamento). Escolha outro horário.');}
   if(list.some(b=>b.date===date&&overlaps(st,st+s.dur,toMin(b.time),toMin(b.time)+b.dur))){
     savingBk=false;
     bookings=list;
-    renderSlots();
+    fillDates();renderSlots();
     return fail('Este horário acabou de ser ocupado. Escolha outro.');
   }
-  const bk={id:newBkId(),createdAt:Date.now(),serviceId:s.id,service:s.name,price:s.price,dur:s.dur,date,time:selSlot,name,phone};
-  let waWin=null;try{waWin=window.open('about:blank','_blank');}catch(e){} /* abre a aba já no clique para o navegador permitir o redirecionamento depois */
+  if(!isBookableWeekDate(date)){savingBk=false;fillDates();renderSlots();return fail('A semana mudou. Selecione uma data disponível da nova semana.');}
+  const bk={id:newBkId(),rev:0,lockStart:takenKeysFor(date,chosenTime,s.dur)[0]?.split('_')[1]||chosenTime,createdAt:Date.now(),serviceId:s.id,service:s.name,price:s.price,dur:s.dur,date,time:chosenTime,name,phone};
+  let waWin=null;try{waWin=window.open('about:blank','_blank');}catch(e){}
+  const slotV={id:bk.id,date:bk.date,time:bk.time,dur:bk.dur,createdAt:bk.createdAt};
+  const upd={['slots/'+bk.id]:slotV,['bookings/'+bk.id]:bk};
+  takenKeysFor(bk.date,bk.time,bk.dur).forEach(tk=>{upd['taken/'+tk]=takenValFor(bk,tk);});
+  let accepted=false,writeError=null;
   try{
-    const slotV={id:bk.id,date:bk.date,time:bk.time,dur:bk.dur,createdAt:bk.createdAt};
-    const upd={['slots/'+bk.id]:slotV,['bookings/'+bk.id]:bk};takenKeysFor(bk.date,bk.time,bk.dur).forEach(tk=>{upd['taken/'+tk]=takenValFor(bk,tk);});
-    await dbPatch(upd); /* um único envio: trava + horário + agendamento juntos, ou nada. Se a trava já existe, o PATCH inteiro falha: é assim que a corrida é travada no servidor */
-    bookings=[...list,bk];
+    // Firebase aplica o PATCH de múltiplos caminhos de forma atômica. HTTP 200
+    // já confirma a gravação: uma falha posterior de leitura NÃO desfaz a reserva.
+    await dbPatch(upd);
+    accepted=true;
   }catch(e){
-    if(waWin)try{waWin.close();}catch(_){}
-    savingBk=false;
-    // Uma conexão interrompida pode ocultar uma gravação que o servidor aceitou.
-    // Confere especificamente o ID criado, antes de permitir uma nova tentativa.
+    writeError=e;
+    // Uma conexão interrompida pode ocorrer DEPOIS de o servidor ter aceitado o
+    // PATCH. Verifica APENAS o ID desta tentativa antes de sugerir novo pedido.
     try{
       const mine=await dbGet('/slots/'+bk.id);
-      if(mine&&String(mine.id)===String(bk.id)){
-        const fresh=await getBk();bookings=fresh;renderSlots();
-        return fail('O servidor recebeu seu agendamento. Atualize a página para conferi-lo antes de tentar de novo.');
-      }
-      const fresh=await getBk();
-      if(fresh.some(b=>b.date===date&&overlaps(st,st+s.dur,toMin(b.time),toMin(b.time)+b.dur))){bookings=fresh;renderSlots();return fail('Este horário acabou de ser ocupado. Escolha outro.');}
+      if(mine&&String(mine.id)===String(bk.id)&&mine.date===date&&mine.time===chosenTime&&Number(mine.dur)===Number(s.dur))
+        accepted=true;
     }catch(_){}
-    return fail('Não foi possível confirmar o resultado da gravação. Confira a agenda antes de tentar novamente, para evitar duplicações.');
+  }
+  if(!accepted){
+    if(waWin)try{waWin.close();}catch(_){}
+    savingBk=false;
+    try{
+      const fresh=await getBk();
+      bookings=fresh;fillDates();renderSlots();
+      if(fresh.some(b=>b.date===date&&overlaps(st,st+s.dur,toMin(b.time),toMin(b.time)+Number(b.dur))))
+        return fail('Este horário acabou de ser ocupado. Escolha outro horário.');
+    }catch(_){}
+    // Sem confirmação do ID, nunca afirmar que não gravou nem repetir sozinho.
+    return fail(writeError&&/403|401/.test(String(writeError.message||''))
+      ? 'O Firebase recusou a reserva. Não tente várias vezes: confira com a barbearia ou escolha outro horário.'
+      : 'Não foi possível confirmar se a reserva foi gravada. Consulte a barbearia antes de tentar novamente.');
   }
   savingBk=false;
-  const msg='✅ *AGENDAMENTO CONFIRMADO — HÉRCULES BARBER*\n\n👤 Cliente: '+name+'\n💈 Serviço: '+s.name+'\n📅 Data: '+date.split('-').reverse().join('/')+' às '+selSlot+'\n💰 Valor: R$ '+s.price.toFixed(2).replace('.',',')+'\n\nAté breve!';
-  document.getElementById('doneMsg').innerHTML='<b style="color:var(--gold)">'+esc(s.name)+'</b> · '+date.split('-').reverse().join('/')+' às <b>'+selSlot+'</b><br>Cliente: '+esc(name);
+  // A resposta positiva do servidor confirma a operação. Leituras de atualização
+  // são opcionais e não podem converter um sucesso em erro ou gerar duplicidade.
+  bookings=[...list,slotV];agendaCarregada=true;
+  try{const fresh=await getBk();if(fresh.some(b=>String(b.id)===String(bk.id)))bookings=fresh;}catch(_){}
+  fillDates();
+  renderSlots();
+  const msg='✅ *AGENDAMENTO CONFIRMADO — HÉRCULES BARBER*\n\n👤 Cliente: '+name+'\n💈 Serviço: '+s.name+'\n📅 Data: '+date.split('-').reverse().join('/')+' às '+chosenTime+'\n💰 Valor: R$ '+s.price.toFixed(2).replace('.',',')+'\n\nAté breve!';
+  document.getElementById('doneMsg').innerHTML='<b style="color:var(--gold)">'+esc(s.name)+'</b> · '+date.split('-').reverse().join('/')+' às <b>'+chosenTime+'</b><br>Cliente: '+esc(name);
   const wa=waLink(msg);
   document.getElementById('doneWa').href=wa;
   if(waWin){try{waWin.location.href=wa;}catch(e){waWin=null;}} /* abre o WhatsApp com a confirmação automaticamente */
-  /* push via ntfy: avisa o barbeiro no iPhone/Android mesmo com tudo fechado */
-  try{fetch('https://ntfy.sh/hercules-cj2uuvecqcy1j8s4',{method:'POST',mode:'no-cors',body:'💈 Novo agendamento! Abra o painel para ver os detalhes.'});}catch(e){}
+  /* Avisos no navegador do barbeiro continuam disponíveis com o painel aberto.
+     Não enviar nomes, agendas ou eventos a serviços externos ao GitHub/Firebase. */
   document.getElementById('bookingForm').classList.add('hidden');
   document.getElementById('bookingDone').classList.remove('hidden');
   document.getElementById('bookingDone').scrollIntoView({behavior:'smooth',block:'center'});
@@ -599,7 +776,7 @@ function resetBooking(){
   document.getElementById('bookingDone').classList.add('hidden');
   document.getElementById('bookingForm').classList.remove('hidden');
   document.getElementById('bkName').value='';document.getElementById('bkPhone').value='';
-  document.getElementById('bkDate').value='';renderSlots();
+  document.getElementById('bkDate').value='';fillDates();renderSlots();
 }
 
 /* ============ ADMIN ============ */
@@ -652,11 +829,17 @@ async function adminLogin(){
     return;
   }
   setTok(j);
+  document.getElementById('admPass').value=''; // limpa a senha digitada após autenticar
+  adminSessionVersion++;
   admOk=true;document.getElementById('adminLogin').classList.add('hidden');
   document.getElementById('adminPanel').classList.remove('hidden');
   try{
-    bookings=await getBk();agendaCarregada=true;
+    const loginVersion=adminSessionVersion;
+    const loginBookings=await getBk();
+    if(loginVersion!==adminSessionVersion)return;
+    bookings=loginBookings;agendaCarregada=true;
     const result=await syncSlots(bookings);
+    if(loginVersion!==adminSessionVersion)return;
     if(result.issues)alert('⚠️ Detectadas inconsistências na agenda. Nenhum registro foi excluído; confira os horários no Firebase.');
     // O login não deve apagar cfg/password nem qualquer agendamento automaticamente.
     // Se cfg/password legado existir, tratar em manutenção separada após backup.
@@ -669,8 +852,22 @@ async function adminLogin(){
   }
   renderAdmin();
 }
-function adminLogout(){admOk=false;adminTok=null;adminRef=null;document.getElementById('adminPanel').classList.add('hidden');
-  document.getElementById('adminLogin').classList.remove('hidden');document.getElementById('admPass').value='';}
+function adminLogout(){
+  // Ocultar o painel não basta: remover também nomes/telefones do DOM e memória.
+  adminSessionVersion++;admOk=false;adminTok=null;adminRef=null;adminExp=0;
+  bookings=[];agendaCarregada=false;bkSeen=null;lastWeekTotal=null;
+  document.getElementById('adminPanel').classList.add('hidden');
+  ['ag','sv','hr','cfg'].forEach(t=>document.getElementById('tab-'+t).replaceChildren());
+  document.getElementById('rsModal').style.display='none';rsB=null;
+  document.getElementById('rsName').textContent='';
+  document.getElementById('rsDate').value='';document.getElementById('rsTime').value='';
+  document.getElementById('rsWarn').textContent='';
+  document.getElementById('adminLogin').classList.remove('hidden');
+  document.getElementById('admPass').value='';
+  admWarn(false);
+  // Recarrega somente os horários públicos; jamais /bookings após logout.
+  boot().catch(()=>{agendaCarregada=false;renderSlots();});
+}
 function showTab(t,el){document.querySelectorAll('.tab[data-tab]').forEach(x=>x.classList.remove('active'));
   if(el)el.classList.add('active');
   ['ag','sv','hr','cfg'].forEach(x=>document.getElementById('tab-'+x).classList.toggle('hidden',x!==t));}
@@ -693,6 +890,10 @@ function renderTabAg(){
     box.innerHTML=top+'<div class="notice info">Nenhum agendamento futuro. Os atendimentos passados são ocultados automaticamente para não acumular.</div>';
     return;
   }
+  // Contagem apenas de agendamentos ativos por data; cancelados ficam em /archive,
+  // fora de /bookings. O contador só lê os dados, sem gravar ou excluir no Firebase.
+  const clientesPorDia=Object.create(null);
+  fut.forEach(b=>{if(b&&b.date)clientesPorDia[b.date]=(clientesPorDia[b.date]||0)+1;});
   const sorted=fut.sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
   /* resumo semanal: total da semana atual + da semana passada (guardado antes da limpeza de segunda) */
   const mSeg=mondayISO();
@@ -716,7 +917,14 @@ function renderTabAg(){
   let html=top,lastDate='';
   const agora=Date.now();
   sorted.forEach(b=>{
-    if(b.date!==lastDate){lastDate=b.date;html+='<h3 style="color:var(--gold);margin:22px 0 8px">📅 '+esc(b.date.split('-').reverse().join('/'))+'</h3>'+totalHtml(b.date);}
+    if(b.date!==lastDate){
+      lastDate=b.date;
+      const qt=clientesPorDia[b.date]||0;
+      html+='<div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:22px 0 8px">'
+        +'<h3 style="color:var(--gold);margin:0">📅 '+esc(b.date.split('-').reverse().join('/'))+'</h3>'
+        +'<span class="badge" style="font-size:13px;padding:6px 12px">👥 '+qt+' '+(qt===1?'cliente agendado':'clientes agendados')+'</span>'
+        +'</div>'+totalHtml(b.date);
+    }
     const atendido=!!b.done; /* confirmado manualmente pelo barbeiro */
     const podeConfirmar=!atendido&&new Date(b.date+'T'+b.time+':00').getTime()+Number(b.dur||0)*60000<agora; /* horário já passou: libera o botão de confirmar */
     html+='<div class="card" style="padding:16px 20px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;'+(atendido?'opacity:.65;border-left:4px solid #2ecc71;':'')+'">'
@@ -748,10 +956,18 @@ function fillOld(){
   if(!el)return;
   const t=todayISO();
   const old=bookings.filter(b=>b.date<t).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
-  const totaisOld={};old.forEach(b=>{totaisOld[b.date]=(totaisOld[b.date]||0)+Number(b.price||0);});
+  const totaisOld={},clientesAntigos={};
+  old.forEach(b=>{totaisOld[b.date]=(totaisOld[b.date]||0)+Number(b.price||0);clientesAntigos[b.date]=(clientesAntigos[b.date]||0)+1;});
   let last='',html='';
   old.forEach(b=>{
-    if(b.date!==last){last=b.date;html+='<h3 style="color:var(--muted);margin:18px 0 8px">📅 '+esc(b.date.split('-').reverse().join('/'))+'</h3><div style="font-size:13px;color:var(--muted);margin:-4px 0 10px">💰 Total do dia: <b style="color:var(--gold)">R$ '+totaisOld[b.date].toFixed(2).replace('.',',')+'</b></div>';}
+    if(b.date!==last){
+      last=b.date;
+      const qt=clientesAntigos[b.date]||0;
+      html+='<div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:18px 0 8px">'
+        +'<h3 style="color:var(--muted);margin:0">📅 '+esc(b.date.split('-').reverse().join('/'))+'</h3>'
+        +'<span class="badge" style="font-size:12px;padding:5px 10px">👥 '+qt+' '+(qt===1?'cliente agendado':'clientes agendados')+'</span>'
+        +'</div><div style="font-size:13px;color:var(--muted);margin:-4px 0 10px">💰 Total do dia: <b style="color:var(--gold)">R$ '+totaisOld[b.date].toFixed(2).replace('.',',')+'</b></div>';
+    }
     html+='<div class="card" style="padding:14px 18px;margin-bottom:10px;opacity:.75;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">'
       +'<div><b style="color:var(--gold)">'+esc(b.time)+'</b> — '+esc(b.service)+' <span class="badge">R$ '+Number(b.price).toFixed(2).replace('.',',')+'</span>'
       +(b.done?' <span class="badge" style="background:rgba(46,204,113,.15);border:1px solid #2ecc71;color:#2ecc71">✅ Atendido</span>':' <span class="badge">⏳ Não confirmado</span>')
@@ -771,12 +987,25 @@ async function changeService(id,sid){
   try{
     const latest=await getBk();
     const target=latest.find(x=>String(x.id)===String(id));if(!target)return;
+    // A duração alterada deve caber também no expediente, não apenas entre reservas.
+    const freshCfg=await dbGet('/cfg');
+    if(freshCfg===undefined)throw new Error('Não foi possível conferir o expediente atual.');
+    const proposed={...target,dur:Number(sv.dur)};
+    if(!bookingFitsSchedule(proposed,freshCfg||cfg)){
+      alert('⛔ A duração do novo serviço ultrapassa o horário de funcionamento. Remarque antes de trocar o serviço.');renderAdmin();return;
+    }
     const st=toMin(target.time);
     const bate=latest.find(x=>String(x.id)!==String(id)&&x.date===target.date&&overlaps(st,st+sv.dur,toMin(x.time),toMin(x.time)+x.dur));
     if(bate){alert('⛔ "'+sv.name+'" dura '+sv.dur+' min e bate com o agendamento das '+bate.time+' ('+bate.name+'). Remarque um dos dois antes de trocar o serviço.');renderAdmin();return;}
-    bookings=await bkApply(m=>{for(const k in m)if(String(m[k].id)===String(id))Object.assign(m[k],{serviceId:sv.id,service:sv.name,price:sv.price,dur:sv.dur});});
+    bookings=await bkApply(m=>{
+      const current=Object.values(m).find(x=>String(x.id)===String(id));
+      if(!current)throw new Error('Agendamento foi cancelado ou alterado em outra sessão.');
+      if(!bookingFitsSchedule({...current,dur:Number(sv.dur)},freshCfg||cfg))throw new Error('Serviço fora do expediente.');
+      if(Object.values(m).some(x=>String(x.id)!==String(id)&&x.date===current.date&&overlaps(toMin(current.time),toMin(current.time)+Number(sv.dur),toMin(x.time),toMin(x.time)+Number(x.dur))))throw new Error('Conflito de horário.');
+      Object.assign(current,{serviceId:sv.id,service:sv.name,price:sv.price,dur:sv.dur});
+    });
     renderAdmin();
-  }catch(e){netErr();}
+  }catch(e){alert('Não foi possível trocar o serviço: a agenda pode ter sido alterada em outra sessão. Atualize e tente novamente.');}
 }
 async function doneBk(id){
   const b=bookings.find(x=>String(x.id)===String(id));if(!b)return;
@@ -784,9 +1013,9 @@ async function doneBk(id){
   try{
     const latest=await getBk(); /* pega a versão mais recente do banco pra não apagar agendamentos novos */
     const target=latest.find(x=>String(x.id)===String(id));if(!target)return;
-    bookings=await bkApply(m=>{for(const k in m)if(String(m[k].id)===String(id))m[k].done=true;});
+    bookings=await bkApply(m=>{let found=false;for(const k in m)if(String(m[k].id)===String(id)){m[k].done=true;found=true;}if(!found)throw new Error('O atendimento deixou de existir na agenda ativa.');});
     renderAdmin();
-  }catch(e){netErr();}
+  }catch(e){alert('Não foi possível confirmar o atendimento: outra sessão pode ter alterado este agendamento. Atualize a agenda.');}
 }
 async function cancelBk(id){
   if(!confirm('Cancelar este agendamento?'))return;
@@ -794,10 +1023,11 @@ async function cancelBk(id){
     if(!(await makeBackup('antes')))throw new Error('Backup não disponível; cancelamento interrompido.');
     const latest=await bkMap();
     if(!Object.values(latest).some(b=>String(b.id)===String(id))){alert('Este agendamento já não está na agenda. Nada foi excluído.');return;}
-    bookings=await bkApply(m=>{for(const k in m)if(String(m[k].id)===String(id))delete m[k];},'cancelado');
+    bookings=await bkApply(m=>{let found=false;for(const k in m)if(String(m[k].id)===String(id)){delete m[k];found=true;}if(!found)throw new Error('O agendamento já foi cancelado em outra sessão.');},'cancelado');
     renderTabAg();renderPublic();renderSlots();
+    refreshBookings().catch(()=>{});
     alert('Agendamento cancelado.');
-  }catch(e){netErr();}
+  }catch(e){alert('Cancelamento não concluído. Outra sessão pode ter alterado o agendamento. Atualize e confira antes de tentar novamente.');}
 }
 let rsB=null;
 function reschedule(id){
@@ -815,14 +1045,11 @@ function rsCheck(){
   if(!rsB){warn.textContent='';return false;}
   const date=document.getElementById('rsDate').value,time=document.getElementById('rsTime').value;
   if(!date||!time){warn.textContent='Escolha a data e o horário.';return false;}
-  const dow=new Date(date+'T12:00:00').getDay();
-  if(!(cfg.days||[])[dow]){warn.textContent='⛔ Não atendemos neste dia da semana.';return false;}
+  const schedule=dailySchedule(date);
+  if(!schedule.open){warn.textContent='⛔ Esta data está fechada ou sem expediente configurado.';return false;}
   const st=toMin(time);
   if(date===todayISO()&&st<=new Date().getHours()*60+new Date().getMinutes()){warn.textContent='⛔ Esse horário de hoje já passou.';return false;}
-  const dH=(cfg.hours&&cfg.hours.length===7)?cfg.hours[dow]:null;
-  const ranges=[];const addR=(a,b)=>{const x=toMin(a||''),y=toMin(b||'');if(!isNaN(x)&&!isNaN(y)&&y>x)ranges.push([x,y]);};
-  if(dH){addR(dH.s1||dH.s,dH.e1||dH.e);addR(dH.s2,dH.e2);}
-  else addR(cfg.start,cfg.end);
+  const ranges=schedule.ranges;
   if(!ranges.some(r=>st>=r[0]&&st+rsB.dur<=r[1])){warn.textContent='⛔ Fora do expediente deste dia ou não cabe antes do fechamento.';return false;}
   if(bookings.some(x=>x.id!==rsB.id&&x.date===date&&overlaps(st,st+rsB.dur,toMin(x.time),toMin(x.time)+x.dur))){warn.textContent='⛔ Já existe agendamento neste horário.';return false;}
   warn.textContent='';
@@ -836,12 +1063,17 @@ async function rsConfirm(){
   if(!confirm('Remarcar '+rsB.name+' para '+nd.split('-').reverse().join('/')+' às '+nt+'?'))return;
   try{
     const idr=rsB.id;
+    const cfgFresh=await dbGet('/cfg');
+    if(cfgFresh===undefined||!dailySchedule(nd,cfgFresh||cfg).open)throw new Error('Data fechada ou agenda indisponível.');
+    const rangeFresh=dailySchedule(nd,cfgFresh||cfg).ranges,stFresh=toMin(nt);
+    if(!rangeFresh.some(([a,z])=>stFresh>=a&&stFresh+Number(rsB.dur)<=z))throw new Error('Horário fora do expediente atual.');
     bookings=await bkApply(m=>{
       const me=Object.values(m).find(x=>String(x.id)===String(idr)),a=toMin(nt);   /* confere de novo na agenda ATUAL do banco */
-      if(me&&Object.values(m).some(x=>String(x.id)!==String(idr)&&x.date===nd&&overlaps(a,a+me.dur,toMin(x.time),toMin(x.time)+x.dur)))throw new Error('conflito');
+      if(!me)throw new Error('Agendamento não existe mais na agenda ativa. Nenhuma remarcação foi realizada.');
+      if(Object.values(m).some(x=>String(x.id)!==String(idr)&&x.date===nd&&overlaps(a,a+me.dur,toMin(x.time),toMin(x.time)+x.dur)))throw new Error('conflito');
       for(const k in m)if(String(m[k].id)===String(idr)){m[k].date=nd;m[k].time=nt;}
     });rsClose();renderAdmin();renderSlots();
-  }catch(e){if(e&&e.message==='conflito'){alert('Esse horário acabou de ser ocupado por outro cliente. Escolha outro.');return;}netErr();}
+  }catch(e){if(e&&e.message==='conflito'){alert('Esse horário acabou de ser ocupado por outro cliente. Escolha outro.');return;}alert('Remarcação não concluída. Os dados podem ter sido alterados em outra sessão. Atualize a agenda e confira antes de tentar novamente.');}
 }
 function renderTabSv(){
   const box=document.getElementById('tab-sv');
@@ -910,8 +1142,92 @@ function renderTabHr(){
   box.innerHTML='<div class="notice info">Dias marcados com dois períodos (ex.: <b>08h–12h e 14h–18h</b>). O vão entre eles é o almoço — fica fora do agendamento. Para atender só de manhã, limpe os campos da tarde.</div>'
     +checks
     +'<div class="row-flex" style="margin-top:14px"><div><label style="margin-top:0">Intervalo entre horários (min)</label><input type="number" id="hrSlot" value="20" disabled style="opacity:0.6" min="10" step="5"></div></div>'
-    +'<br><button class="btn btn-gold" onclick="saveHours()">SALVAR HORÁRIOS</button><div id="hrMsg"></div>';
+    +'<br><button class="btn btn-gold" onclick="saveHours()">SALVAR HORÁRIOS SEMANAIS</button><div id="hrMsg"></div>'
+    +'<hr style="border:none;border-top:1px solid var(--line);margin:32px 0 24px">'
+    +'<h3 style="color:var(--gold);margin-bottom:8px">📅 Abrir ou fechar datas específicas</h3>'
+    +'<p style="color:var(--muted);font-size:14px;margin-bottom:16px">Feche uma data (feriado, folga), abra um dia normalmente fechado ou libere um horário especial, sem mudar a semana inteira. Datas da próxima semana só ficam disponíveis aos clientes no domingo.</p>'
+    +'<label for="specialDate">Data específica</label><input id="specialDate" type="date" min="'+todayISO()+'" onchange="loadSpecialDateForm()">'
+    +'<label for="specialMode">O que deseja fazer?</label><select id="specialMode" onchange="toggleSpecialFields()">'
+    +'<option value="open">✅ Abrir data / definir horários especiais</option>'
+    +'<option value="closed">⛔ Fechar esta data</option>'
+    +'<option value="default">↩️ Voltar ao horário semanal</option></select>'
+    +'<div id="specialPeriods">'
+    +'<label>1º período</label><div class="row-flex"><input type="time" id="spS1" value="08:00" aria-label="Início do primeiro período"><input type="time" id="spE1" value="12:00" aria-label="Fim do primeiro período"></div>'
+    +'<label>2º período (opcional)</label><div class="row-flex"><input type="time" id="spS2" value="14:00" aria-label="Início do segundo período"><input type="time" id="spE2" value="18:00" aria-label="Fim do segundo período"></div></div>'
+    +'<div id="specialDateHint" style="color:var(--muted);font-size:13px;margin-top:10px"></div>'
+    +'<button class="btn btn-gold" style="margin-top:16px" onclick="saveSpecialDate()">SALVAR DATA ESPECÍFICA</button>'
+    +'<div id="specialDateMsg" role="status" aria-live="polite"></div>'
+    +'<div id="specialDateList" style="margin-top:18px"></div>';
+  renderSpecialDateList();
 }
+/* Seleção de exceções: apenas a data escolhida; não altera outros dias. */
+function toggleSpecialFields(){
+  const visible=document.getElementById('specialMode').value==='open';
+  document.getElementById('specialPeriods').classList.toggle('hidden',!visible);
+  const hint=document.getElementById('specialDateHint');
+  hint.textContent=visible?'Os horários substituem os períodos habituais somente nesta data. Deixe ambos os campos do 2º período vazios para atender só uma vez.':
+    document.getElementById('specialMode').value==='closed'?'Nenhuma vaga será oferecida nesta data. Se já houver agendamentos, o fechamento será bloqueado.':'Remove somente o horário especial e volta às configurações semanais.';
+}
+function loadSpecialDateForm(){
+  const date=document.getElementById('specialDate').value;
+  const special=dateOverrideFor(date);
+  const mode=special?.mode||'default';
+  const sel=document.getElementById('specialMode');sel.value=mode;
+  const weeklyHour=(cfg.hours&&cfg.hours[new Date(date+'T12:00:00').getDay()])||{};
+  const h=special?.mode==='open'?special:weeklyHour;
+  for(const [id,k,fallback] of [['spS1','s1','08:00'],['spE1','e1','12:00'],['spS2','s2',''],['spE2','e2','']]){
+    document.getElementById(id).value=String(h[k]||((k==='s1'&&h.s)||(k==='e1'&&h.e))||fallback);
+  }
+  document.getElementById('specialDateMsg').textContent='';
+  toggleSpecialFields();
+}
+function renderSpecialDateList(){
+  const box=document.getElementById('specialDateList');if(!box)return;
+  const entries=Object.entries(cfg.dateOverrides||{}).filter(([date,val])=>/^\d{4}-\d{2}-\d{2}$/.test(date)&&date>=todayISO()&&val&&['open','closed'].includes(val.mode)).sort((a,b)=>a[0].localeCompare(b[0]));
+  if(!entries.length){box.innerHTML='<div class="notice info">Nenhuma data especial cadastrada para os próximos dias.</div>';return;}
+  box.innerHTML='<h3 style="color:var(--gold);margin:12px 0">Datas especiais salvas</h3>'+entries.map(([date,v])=>{
+    const hours=v.mode==='closed'?'⛔ Fechado':'✅ Aberto — '+esc([v.s1&&v.e1?v.s1+'–'+v.e1:'',v.s2&&v.e2?v.s2+'–'+v.e2:''].filter(Boolean).join(' / '));
+    return '<button type="button" style="display:block;width:100%;text-align:left;color:var(--text);background:var(--dark2);border:1px solid var(--line);border-radius:8px;margin:6px 0;padding:11px;cursor:pointer" onclick="selectSpecialDate(\''+date+'\')"><b>'+date.split('-').reverse().join('/')+'</b> — '+hours+'</button>';
+  }).join('');
+}
+function selectSpecialDate(date){document.getElementById('specialDate').value=date;loadSpecialDateForm();document.getElementById('specialDate').scrollIntoView({behavior:'smooth',block:'center'});}
+let specialSaving=false;
+async function saveSpecialDate(){
+  if(specialSaving)return;
+  const msg=document.getElementById('specialDateMsg');msg.textContent='';
+  const date=document.getElementById('specialDate').value;
+  const mode=document.getElementById('specialMode').value;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||date<todayISO()||new Date(date+'T12:00:00').toString()==='Invalid Date'){
+    msg.textContent='Escolha uma data válida a partir de hoje.';return;
+  }
+  if(!['open','closed','default'].includes(mode)){msg.textContent='Ação inválida.';return;}
+  let value=null;
+  try{
+    if(mode==='open'){
+      value={mode:'open',s1:document.getElementById('spS1').value,e1:document.getElementById('spE1').value,s2:document.getElementById('spS2').value,e2:document.getElementById('spE2').value};
+      validateSpecialPeriods(value);
+    }else if(mode==='closed')value={mode:'closed'};
+    specialSaving=true;
+    // Rejeita mudanças que deixariam algum agendamento existente fora do expediente.
+    // A consulta ocorre ANTES de qualquer gravação; em falha de rede não executa alteração.
+    const active=await getAllActiveBookingRecords();
+    const freshCfg=await dbGet('/cfg');
+    if(freshCfg===undefined)throw new Error('Falha ao consultar configurações atuais; nada foi alterado.');
+    const updated={...(freshCfg||cfg),dateOverrides:{...((freshCfg||cfg).dateOverrides||{})}};
+    if(value===null)delete updated.dateOverrides[date];else updated.dateOverrides[date]=value;
+    const affected=active.filter(b=>b.date===date&&!bookingFitsSchedule(b,updated));
+    if(affected.length)throw new Error('Não foi possível salvar: há '+affected.length+' agendamento(s) nesta data que ficariam fora do expediente. Preserve ou remarque os clientes antes de fechá-la.');
+    await putSpecialDateConditional(date,value);
+    cfg={...cfg,dateOverrides:{...(cfg.dateOverrides||{})}};
+    if(value===null)delete cfg.dateOverrides[date];else cfg.dateOverrides[date]=value;
+    fillDates();renderSlots();renderSpecialDateList();
+    msg.innerHTML='<div class="notice ok" style="margin-top:12px">Data atualizada! Nenhum agendamento foi alterado ou excluído.</div>';
+  }catch(e){
+    msg.textContent=e?.message||'Não foi possível salvar a data. Nenhum agendamento foi excluído.';
+    msg.style.color='#f0a0a0';
+  }finally{specialSaving=false;}
+}
+
 async function saveHours(){
   const H=[];
   for(let i=0;i<7;i++){
@@ -933,8 +1249,19 @@ async function saveHours(){
       if(second&&(!t(h.s2)||!t(h.e2)||h.e2<=h.s2))throw new Error('Segundo período inválido em '+DAYS[i]);
       if(first&&second&&!(h.e1<=h.s2||h.e2<=h.s1))throw new Error('Períodos sobrepostos em '+DAYS[i]);
     }
-    await dbPatch({'cfg/days':days,'cfg/hours':H,'cfg/slotMin':20});
-    cfg={...cfg,days,hours:H,slotMin:20};
+    // Não feche dias nem encurte horários que já tenham reservas ativas.
+    const freshCfg=await dbGet('/cfg');if(freshCfg===undefined)throw new Error('Falha ao conferir o expediente atual. Nenhuma alteração foi feita.');
+    const currentDays=(freshCfg||{}).days,currentHours=(freshCfg||{}).hours;
+    if(JSON.stringify(currentDays)!==JSON.stringify(cfg.days)||JSON.stringify(currentHours)!==JSON.stringify(cfg.hours))throw new Error('Horários foram modificados em outra sessão. Atualize o site antes de salvar.');
+    const active=await getAllActiveBookingRecords();
+    const proposed={...(freshCfg||cfg),days,hours:H};
+    const conflicting=active.filter(b=>b.date>=todayISO()&&!bookingFitsSchedule(b,proposed));
+    if(conflicting.length)throw new Error('Não foi possível fechar/reduzir horários: '+conflicting.length+' agendamento(s) existente(s) ficariam fora do expediente. Nada foi alterado.');
+    // Número de versão conferido nas regras; sessões simultâneas com a mesma versão não sobrescrevem.
+    const scheduleRev=Number(freshCfg?.scheduleRev||0);
+    if(!Number.isInteger(scheduleRev)||scheduleRev<0)throw new Error('Versão do expediente inválida. Confira no Firebase.');
+    await dbPatch({'cfg/days':days,'cfg/hours':H,'cfg/slotMin':20,'cfg/scheduleRev':scheduleRev+1});
+    cfg={...cfg,days,hours:H,slotMin:20,scheduleRev:scheduleRev+1};
     renderPublic();renderSlots();
     document.getElementById('hrMsg').innerHTML='<div class="notice ok" style="margin-top:12px">Horários salvos! Já visíveis para todos os clientes.</div>';
   }catch(e){alert(e&&e.message?e.message:'Não foi possível salvar os horários.');}
@@ -948,12 +1275,8 @@ function renderTabCfg(){
     +'<input id="cfgIg" placeholder="https://instagram.com/herculesoficial_barber" value="'+esc(cfg.instagram)+'">'
     +'<label>Endereço (aparece no rodapé do site)</label>'
     +'<input id="cfgAddr" placeholder="Rua, número, bairro, cidade" value="'+esc(cfg.address||'')+'">'
-    +'<label>Link do Google Maps</label>'
-    +'<input id="cfgMaps" placeholder="https://maps.app.goo.gl/..." value="'+esc(cfg.maps||MAPS_DEFAULT)+'">'
-    +'<label>Dias liberados para agendamento (a partir de hoje)</label>'
-    +'<input id="cfgAdv" type="number" min="1" max="30" value="'+ADV()+'">'
-    +'<label>Nova senha de acesso</label>'
-    +'<input id="cfgPass" type="password" placeholder="Deixe em branco para manter a atual">'
+    +'<label>Abertura da agenda para clientes</label>'
+    +'<small style="color:var(--muted)">Semanal: de domingo a sábado. Todos os domingos o site libera automaticamente a nova semana, conforme os dias e horários de funcionamento.</small>'
     +'<br><br><button class="btn btn-gold" onclick="saveCfg()">SALVAR CONFIGURAÇÕES</button><div id="cfgMsg"></div>'
     +'<hr style="border:none;border-top:1px solid #333;margin:24px 0 16px">'
     +'<label>Notificações de novo agendamento</label>'
@@ -963,7 +1286,12 @@ function renderTabCfg(){
     +'<label>Backup da agenda</label>'
     +'<small style="color:var(--muted)">Cria uma cópia diária quando o barbeiro abre o painel. Cópias antigas não são apagadas automaticamente.</small>'
     +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0"><button class="btn btn-outline" style="padding:10px 18px;font-size:14px" onclick="backupNow()">💾 Salvar backup agora</button><button class="btn btn-outline" style="padding:10px 18px;font-size:14px" onclick="listBackups()">📋 Ver backups</button><button class="btn btn-outline" style="padding:10px 18px;font-size:14px" onclick="exportBackupJson()">⬇️ Baixar cópia (JSON)</button></div>'
-    +'<div id="bkpMsg"></div><div id="bkpList"></div>';
+    +'<div id="bkpMsg"></div><div id="bkpList"></div>'
+    +'<hr style="border:none;border-top:1px solid #333;margin:24px 0 16px">'
+    +'<label>Diagnóstico de armazenamento (somente leitura)</label>'
+    +'<small style="color:var(--muted)">Analisa registros antigos e backups, mas NÃO apaga, modifica nem autoriza limpeza do Firebase. Agendamentos e dados de clientes permanecem preservados.</small>'
+    +'<div style="margin:12px 0"><button class="btn btn-outline" style="padding:10px 18px;font-size:14px" onclick="previewRetentionReport()">🔎 Analisar espaço e retenção</button></div>'
+    +'<div id="retentionPreview" aria-live="polite"></div>';
   updateNotifBtn();
 }
 async function saveCfg(){
@@ -973,20 +1301,15 @@ async function saveCfg(){
     fresh.whatsapp=document.getElementById('cfgWa').value.replace(/\D/g,'');
     fresh.instagram=document.getElementById('cfgIg').value.trim();
     fresh.address=document.getElementById('cfgAddr').value.trim();
-    const mp=document.getElementById('cfgMaps').value.trim();
-    fresh.maps=/^https?:\/\//i.test(mp)?mp:'';
-    fresh.advanceDays=Math.max(1,Math.min(30,parseInt(document.getElementById('cfgAdv').value)||7));
-    const np=document.getElementById('cfgPass').value;
-    if(np){if(np.length<6){document.getElementById('cfgMsg').innerHTML='<div class="notice err" style="margin-top:12px">A senha deve ter ao menos 6 caracteres.</div>';return;}try{const rr=await fetch('https://identitytoolkit.googleapis.com/v1/accounts:update?key='+FB_API_KEY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idToken:adminTok,password:np,returnSecureToken:true})});const jj=await rr.json();if(!jj.idToken)throw 0;setTok(jj);}catch(x){document.getElementById('cfgMsg').innerHTML='<div class="notice err" style="margin-top:12px">Não foi possível trocar a senha.</div>';return;}}
-    await dbPatch({'cfg/whatsapp':fresh.whatsapp,'cfg/instagram':fresh.instagram,'cfg/address':fresh.address,'cfg/maps':fresh.maps,'cfg/advanceDays':fresh.advanceDays});
-    cfg={...cfg,whatsapp:fresh.whatsapp,instagram:fresh.instagram,address:fresh.address,maps:fresh.maps,advanceDays:fresh.advanceDays};
+    await dbPatch({'cfg/whatsapp':fresh.whatsapp,'cfg/instagram':fresh.instagram,'cfg/address':fresh.address});
+    cfg={...cfg,whatsapp:fresh.whatsapp,instagram:fresh.instagram,address:fresh.address};
     renderPublic();
     document.getElementById('cfgMsg').innerHTML='<div class="notice ok" style="margin-top:12px">Configurações salvas! Já visíveis para todos os clientes.</div>';
   }catch(e){netErr();}
 }
 
 /* ============ BACKUP DA AGENDA ============ */
-const BKP_KEEP=14;            /* quantos dias de backup ficam guardados */
+const BKP_KEEP=14;            /* legado informativo: NÃO há exclusão automática de backups */
 let bkpDay='';
 const isoDate=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const bkpDateOf=k=>/^\d{4}-\d{2}-\d{2}/.test(k)?k.slice(0,10):null;
@@ -1001,13 +1324,31 @@ async function bkpKeys(){   /* lista só os nomes dos backups; undefined = erro 
 }
 async function makeBackup(tag){   /* tag: auto | manual | antes. Só COPIA; nunca altera a agenda */
   if(!adminTok)return false; /* backup SÓ do admin: cliente lê só /slots (sem nome/telefone) e salvaria backup incompleto */
-  const bk=await getBk();         /* lança erro se a rede falhar */
-  const sv=await dbGet('/services');if(sv===undefined)throw new Error('offline');
-  if(!bk.length)return false;     /* nunca guarda backup vazio */
+  // Leia a coleção bruta para não ignorar silenciosamente registros antigos
+  // cujo identificador não passe nos filtros usados pela interface.
+  const rawBk=await dbGet('/bookings');if(rawBk===undefined)throw new Error('Não foi possível ler todos os agendamentos.');
+  const bk=Array.isArray(rawBk)?rawBk.filter(Boolean):Object.values(rawBk||{}).filter(Boolean);
+  const [sv,slotsAll,takenAll,cfgAll,archiveAll,lastWeekAll]=await Promise.all(
+    ['/services','/slots','/taken','/cfg','/archive','/lastWeek'].map(dbGet));
+  if([sv,slotsAll,takenAll,cfgAll,archiveAll,lastWeekAll].some(v=>v===undefined))
+    throw new Error('Backup interrompido: não foi possível ler todos os dados.');
+  // Confere novamente TODOS os caminhos copiados. Evita aceitar cópias em que
+  // horários, travas, clientes ou configurações mudaram durante a coleta.
+  // Isso reduz inconsistências, mas não transforma o backup em snapshot transacional.
+  const rereadPaths=['/bookings','/services','/slots','/taken','/cfg','/archive','/lastWeek'];
+  const reread=await Promise.all(rereadPaths.map(dbGet));
+  const initial=[rawBk,sv,slotsAll,takenAll,cfgAll,archiveAll,lastWeekAll];
+  if(reread.some(x=>x===undefined)||reread.some((x,i)=>!sameData(x,initial[i])))
+    throw new Error('Algum dado mudou durante o backup. Nenhuma cópia incompleta será gravada.');
+  if(!bk.length)return false;     /* sem agendamentos: mantém a exportação integral JSON disponível */
   const n=new Date();
   const hm=String(n.getHours()).padStart(2,'0')+String(n.getMinutes()).padStart(2,'0')+String(n.getSeconds()).padStart(2,'0')+'-'+String(n.getMilliseconds()).padStart(3,'0');
   const id=isoDate(n)+(tag==='auto'?'_auto-':(tag==='manual'?'_manual-':'_antes-'))+hm+'-'+Math.random().toString(36).slice(2,8);
-  const payload={at:n.toISOString(),n:bk.length,bookings:bk,services:Array.isArray(sv)?sv:(sv?Object.values(sv):[])};
+  const safeCfg=cfgAll?{...cfgAll}:{};
+  delete safeCfg.password; // jamais duplicar a senha legada em backups.
+  const payload={format:'hercules-completo-v3',at:n.toISOString(),n:bk.length,bookings:bk,
+    services:Array.isArray(sv)?sv:(sv?Object.values(sv):[]),slots:slotsAll||{},taken:takenAll||{},
+    cfg:safeCfg,archive:archiveAll||{},lastWeek:lastWeekAll||{}};
   if(!(await dbCreateIfAbsent('/backups/'+id,payload)))throw new Error('O identificador do backup já existe.');
   // Verificação de leitura de volta: um backup só é considerado salvo quando confirmado.
   const chk=await dbGet('/backups/'+id+'/n');
@@ -1034,7 +1375,15 @@ async function backupNow(){
     const ok=await makeBackup('manual');
     m.innerHTML=ok?'<div class="notice ok">Backup salvo!</div>':'<div class="notice info">Não há agendamentos para guardar.</div>';
     listBackups();
-  }catch(e){netErr();}
+  }catch(e){
+    // Diferenciar inconsistência detectada de falha de conexão: não afirmar que
+    // o backup foi salvo se a agenda mudou durante a coleta.
+    if(m){
+      const aviso=document.createElement('div');aviso.className='notice err';
+      aviso.textContent='Backup não salvo: '+(e?.message||'não foi possível confirmar a cópia.');
+      m.replaceChildren(aviso);
+    }
+  }
 }
 async function listBackups(){
   const box=document.getElementById('bkpList');if(!box)return;
@@ -1057,7 +1406,7 @@ async function restoreBackup(k){
   try{
     const saved=await dbGet('/backups/'+k);
     if(saved===undefined)throw new Error('Sem conexão');
-    const list=(saved&&saved.bookings)?(Array.isArray(saved.bookings)?saved.bookings:Object.values(saved.bookings)).filter(b=>b&&isSafeId(b.id)):[];
+    const list=(saved&&saved.bookings)?(Array.isArray(saved.bookings)?saved.bookings:Object.values(saved.bookings)).filter(b=>b&&isSafeId(b.id)&&b.status!=='cancelled'):[];
     if(!list.length)return alert('Esse backup está vazio.');
     if(!confirm('Restaurar APENAS agendamentos ausentes deste backup?\n\nNenhum agendamento atual será substituído ou apagado. Conflitos de horário serão ignorados e informados.'))return;
     const latest=await getBk();
@@ -1067,7 +1416,9 @@ async function restoreBackup(k){
     if(held===undefined||archived===undefined)throw new Error('Não foi possível verificar travas e cancelamentos');
     if(adminBookingEdit)throw new Error('Existe outra edição em andamento.');
     const locks=held||{},archive=archived||{};
-    const ids=new Set(latest.map(x=>String(x.id)));
+    const rawForRestore=await dbGet('/bookings');if(rawForRestore===undefined)throw new Error('Não foi possível verificar históricos cancelados');
+    const allIds=new Set((Array.isArray(rawForRestore)?rawForRestore:Object.values(rawForRestore||{})).filter(Boolean).map(x=>String(x.id)));
+    const ids=new Set([...latest.map(x=>String(x.id)),...allIds]);
     const plan=[...latest],updates={};let ignored=0,inserted=0;
     for(const b of list){
       if(ids.has(String(b.id))||archive[b.id]){ignored++;continue;} // nunca ressuscitar cancelado ou arquivado
@@ -1080,7 +1431,7 @@ async function restoreBackup(k){
       const conflict=plan.some(x=>x.date===b.date&&overlaps(st,st+Number(b.dur),toMin(x.time),toMin(x.time)+Number(x.dur))) ||
         keys.some(tk=>locks[tk]&&String(locks[tk].bookingId)!==String(b.id));
       if(conflict){ignored++;continue;}
-      updates['bookings/'+b.id]=b;
+      updates['bookings/'+b.id]={...b,rev:0,lockStart:takenKeysFor(b.date,b.time,b.dur)[0]?.split('_')[1]||b.time};
       updates['slots/'+b.id]={id:b.id,date:b.date,time:b.time,dur:b.dur,createdAt:b.createdAt||Date.now()};
       keys.forEach(tk=>{updates['taken/'+tk]=takenValFor(b,tk);locks[tk]=updates['taken/'+tk];});
       ids.add(String(b.id));plan.push(b);inserted++;
@@ -1127,8 +1478,114 @@ async function exportBackupJson(){
   }catch(e){alert('Não foi possível baixar uma cópia completa. Confira a internet e entre novamente no painel.');}
 }
 
+/* ============ DIAGNÓSTICO CONSERVADOR DE RETENÇÃO ============
+   Somente leitura. Nenhuma função deste bloco escreve, faz PATCH/PUT ou exclui dados.
+   A lista de candidatos NÃO autoriza limpeza; exige backup externo comprovadamente restaurável.
+   O limite BKP_KEEP antigo NÃO executa retenção. */
+const RETENTION_REVIEW_POLICY={attendedDays:45,autoBackupMinimumAgeDays:90,dailyBackups:14,weeklyBackups:8,monthlyBackups:6};
+function retentionDayNumber(iso){
+  if(typeof iso!=='string'||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(iso))return null;
+  const [y,m,d]=iso.split('-').map(Number);
+  const n=Date.UTC(y,m-1,d);
+  return Number.isFinite(n)&&new Date(n).toISOString().slice(0,10)===iso?n/86400000:null;
+}
+function retentionWeekKey(iso){
+  const n=retentionDayNumber(iso);if(n===null)return '';
+  // Domingo a sábado, compatível com a janela semanal da agenda.
+  const date=new Date(n*86400000),sunday=n-date.getUTCDay();
+  return new Date(sunday*86400000).toISOString().slice(0,10);
+}
+function retentionObject(v){
+  if(!v||typeof v!=='object')return {};
+  if(Array.isArray(v)){const out={};v.forEach((x,i)=>{if(x!=null)out[i]=x;});return out;}
+  return v;
+}
+function retentionBytes(v){return new TextEncoder().encode(JSON.stringify(v??null)).length;}
+function calculateRetentionPreview(data,dayISO){
+  const p=RETENTION_REVIEW_POLICY,now=retentionDayNumber(dayISO);
+  if(now===null)throw new Error('Data atual inválida');
+  const books=retentionObject(data.bookings),slots=retentionObject(data.slots),taken=retentionObject(data.taken),archive=retentionObject(data.archive);
+  const backups=(data.backupKeys||[]).filter(k=>typeof k==='string');
+  const candidateSlots=[],candidateTaken=[],anomalies=[],cancelled=[];
+  const isOldCompleted=b=>!!(b&&b.done===true&&b.status!=='cancelled'&&retentionDayNumber(b.date)!==null&&now-retentionDayNumber(b.date)>p.attendedDays);
+  for(const [id,slot] of Object.entries(slots)){
+    const b=books[id];
+    if(!b){anomalies.push('slot sem agendamento');continue;}
+    if(b.status==='cancelled'||slot?.date!==b.date||slot?.time!==b.time||Number(slot?.dur)!==Number(b.dur)){
+      anomalies.push('slot inconsistente');continue;
+    }
+    if(isOldCompleted(b))candidateSlots.push(id);
+  }
+  for(const [key,lock] of Object.entries(taken)){
+    const b=books[String(lock?.bookingId??'')];
+    if(!b){anomalies.push('trava sem agendamento');continue;}
+    if(b.status==='cancelled'||!takenKeysFor(b.date,b.time,b.dur).includes(key)||lock.date!==b.date||lock.time!==key.split('_')[1]){
+      anomalies.push('trava inconsistente');continue;
+    }
+    if(isOldCompleted(b))candidateTaken.push(key);
+  }
+  Object.values(books).forEach(b=>{if(b?.status==='cancelled')cancelled.push(b);});
+  const auto=backups.filter(k=>/^\d{4}-\d{2}-\d{2}_auto-/.test(k)&&retentionDayNumber(k.slice(0,10))!==null).sort().reverse();
+  const keep=new Set(auto.slice(0,p.dailyBackups));
+  const weeks=new Set(),months=new Set();
+  for(const k of auto){
+    const day=k.slice(0,10),wk=retentionWeekKey(day),mo=day.slice(0,7);
+    if(weeks.size<p.weeklyBackups&&!weeks.has(wk)){weeks.add(wk);keep.add(k);}
+    if(months.size<p.monthlyBackups&&!months.has(mo)){months.add(mo);keep.add(k);}
+  }
+  const candidateBackups=auto.filter(k=>!keep.has(k)&&now-retentionDayNumber(k.slice(0,10))>p.autoBackupMinimumAgeDays);
+  const measuredSlotBytes=candidateSlots.reduce((s,id)=>s+retentionBytes(slots[id]),0);
+  const measuredTakenBytes=candidateTaken.reduce((s,id)=>s+retentionBytes(taken[id]),0);
+  return {
+    totalBookings:Object.keys(books).length,cancelled:cancelled.length,archivedRecords:Object.keys(archive).length,
+    totalSlots:Object.keys(slots).length,totalTaken:Object.keys(taken).length,
+    totalBackups:backups.length,manualOrBeforeBackups:backups.filter(k=>k.includes('_manual')||k.includes('_antes')).length,
+    slotCandidates:candidateSlots.length,takenCandidates:candidateTaken.length,
+    backupCandidates:candidateBackups.length,backupSampleKey:candidateBackups[0]||null,
+    measuredSlotBytes,measuredTakenBytes,anomalies:anomalies.length,
+    // Nomes e telefones intencionalmente não aparecem no resultado.
+    noAutomaticDeletion:true
+  };
+}
+function retentionSizeText(bytes){
+  if(!Number.isFinite(bytes)||bytes<0)return 'não estimado';
+  return bytes>=1048576?(bytes/1048576).toFixed(2)+' MiB':bytes>=1024?(bytes/1024).toFixed(1)+' KiB':Math.round(bytes)+' bytes';
+}
+let retentionPreviewBusy=false;
+async function previewRetentionReport(){
+  const out=document.getElementById('retentionPreview');if(!out)return;
+  if(!adminTok||!admOk){out.textContent='Entre na Área do Barbeiro antes de analisar.';return;}
+  if(retentionPreviewBusy)return;
+  retentionPreviewBusy=true;out.textContent='Analisando somente leitura…';
+  try{
+    const [books,slots0,taken0,archive0,keys]=await Promise.all([
+      dbGet('/bookings'),dbGet('/slots'),dbGet('/taken'),dbGet('/archive'),bkpKeys()
+    ]);
+    if([books,slots0,taken0,archive0,keys].some(x=>x===undefined))throw new Error('Leitura incompleta');
+    // Não é uma operação de limpeza. O arquivo original e as regras permanecem intactos.
+    const report=calculateRetentionPreview({bookings:books||{},slots:slots0||{},taken:taken0||{},archive:archive0||{},backupKeys:keys},todayISO());
+    let sampleBytes=null;
+    if(report.backupSampleKey){
+      const sample=await dbGet('/backups/'+report.backupSampleKey);
+      if(sample!==undefined&&sample!==null)sampleBytes=retentionBytes(sample);
+    }
+    const approx=sampleBytes===null?'não disponível':retentionSizeText(sampleBytes*report.backupCandidates);
+    const pre=retentionSizeText(report.measuredSlotBytes+report.measuredTakenBytes);
+    out.innerHTML='<div class="notice info">'
+      +'<b>Relatório de retenção — nenhuma exclusão executada</b>'
+      +'<p style="margin-top:8px">Agendamentos preservados: <b>'+report.totalBookings+'</b> (cancelados: '+report.cancelled+'). Backups encontrados: <b>'+report.totalBackups+'</b>.</p>'
+      +'<p style="margin-top:8px">Arquivos históricos preservados em /archive: <b>'+report.archivedRecords+'</b>.</p>'
+      +'<p style="margin-top:8px">Possíveis registros temporários antigos de atendimentos confirmados: '+report.slotCandidates+' horários e '+report.takenCandidates+' travas; volume JSON aproximado: <b>'+pre+'</b>.</p>'
+      +'<p style="margin-top:8px">Backups automáticos antigos fora da seleção proposta: <b>'+report.backupCandidates+'</b>. Estimativa aproximada por amostra: <b>'+approx+'</b> (não é medição real do espaço cobrado).</p>'
+      +'<p style="margin-top:8px">Registros inconsistentes que exigem análise manual: <b>'+report.anomalies+'</b>. Backups manuais e de segurança: '+report.manualOrBeforeBackups+' (protegidos).</p>'
+      +'<p style="margin-top:8px"><b>Não apagar agora:</b> confirme primeiro um backup externo completo, testes de restauração, registros históricos e a política aprovada. Não há limpeza com o site fechado.</p>'
+      +'</div>';
+  }catch(e){out.innerHTML='<div class="notice err">Não foi possível completar a leitura. Nenhuma exclusão ou alteração foi feita.</div>';}
+  finally{retentionPreviewBusy=false;}
+}
+
 /* ============ INIT ============ */
-document.getElementById('bkService').addEventListener('change',renderSlots);
+document.getElementById('bkService').addEventListener('change',()=>{fillDates();renderSlots();});
 boot();
 
 /* ============ ATUALIZAÇÃO AUTOMÁTICA (quase tempo real) ============ */
@@ -1144,29 +1601,34 @@ function admWarn(on){
 let refreshBusy=false;
 async function refreshBookings(){
   if(refreshBusy)return;
+  const version=adminSessionVersion;
   refreshBusy=true;
   try{
     const bk0=await getBk();
+    if(version!==adminSessionVersion)return;
     agendaCarregada=true;
     const cc=await dbGet('/cfg'),ss=await dbGet('/services');
+    if(version!==adminSessionVersion)return;
     if(cc===undefined||ss===undefined)throw new Error('Configurações indisponíveis');
     let changed=false;
     const safeCfg=cc?{...cc}:null;if(safeCfg)delete safeCfg.password;
-    if(safeCfg&&JSON.stringify(safeCfg)!==JSON.stringify(cfg)){cfg=safeCfg;changed=true;}
-    if(ss){const next=Array.isArray(ss)?ss:Object.values(ss);if(JSON.stringify(next)!==JSON.stringify(services)){services=next;changed=true;}}
-    if(changed)renderPublic();
+    if(safeCfg&&!sameData(safeCfg,cfg)){cfg=safeCfg;changed=true;}
+    if(ss){const next=Array.isArray(ss)?ss:Object.values(ss);if(!sameData(next,services)){services=next;changed=true;}}
+    bookings=bk0; // verifica disponibilidade usando a leitura mais recente
+    if(changed)renderPublic();else fillDates();
+    if(changed&&admOk)renderSpecialDateList();
     admWarn(false);
     if(adminTok){
       const lw=await dbGet('/lastWeek');
+      if(version!==adminSessionVersion)return;
       lastWeekTotal=(lw&&lw.week===mondayISO()&&typeof lw.total==='number')?lw.total:null;
     }
-    bookings=bk0;
     checkNewBk();
     if(adminTok)ensureDailyBackup();
     // Nenhum histórico é apagado automaticamente: apenas ocultado na interface.
     renderSlots();
     if(typeof admOk!=='undefined'&&admOk)renderTabAg();
-  }catch(e){agendaCarregada=false;renderSlots();admWarn(!!adminTok);}
+  }catch(e){if(version===adminSessionVersion){agendaCarregada=false;renderSlots();admWarn(!!adminTok);}}
   finally{refreshBusy=false;}
 }
 function mondayISO(){const d=new Date();d.setDate(d.getDate()-((d.getDay()+6)%7));return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
