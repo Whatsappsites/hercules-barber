@@ -1406,15 +1406,16 @@ function renderTabCfg(){
     +'<small style="color:var(--muted)">Avisa neste aparelho quando um cliente agendar (Android/PC, com o painel aberto).</small>'
     +'<hr style="border:none;border-top:1px solid #333;margin:24px 0 16px">'
     +'<label>Backup da agenda</label>'
-    +'<small style="color:var(--muted)">Cria uma cópia diária quando o barbeiro abre o painel. Cópias antigas não são apagadas automaticamente.</small>'
+    +'<small style="color:var(--muted)">Cria uma cópia diária quando o barbeiro abre o painel. Mantém até 7 backups automáticos e 3 manuais no Firebase, após confirmar uma nova cópia. Backups de segurança e arquivos JSON baixados não entram nesse limite.</small>'
     +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0"><button class="btn btn-outline" style="padding:10px 18px;font-size:14px" onclick="backupNow()">💾 Salvar backup agora</button><button class="btn btn-outline" style="padding:10px 18px;font-size:14px" onclick="listBackups()">📋 Ver backups</button><button class="btn btn-outline" style="padding:10px 18px;font-size:14px" onclick="exportBackupJson()">⬇️ Baixar cópia (JSON)</button></div>'
-    +'<div id="bkpMsg"></div><div id="bkpList"></div>'
+    +'<div id="bkpMsg"></div><div id="bkpRetentionMsg" aria-live="polite"></div><div id="bkpList"></div>'
     +'<hr style="border:none;border-top:1px solid #333;margin:24px 0 16px">'
     +'<label>Diagnóstico de armazenamento (somente leitura)</label>'
     +'<small style="color:var(--muted)">Analisa registros antigos e backups, mas NÃO apaga, modifica nem autoriza limpeza do Firebase. Agendamentos e dados de clientes permanecem preservados.</small>'
     +'<div style="margin:12px 0"><button class="btn btn-outline" style="padding:10px 18px;font-size:14px" onclick="previewRetentionReport()">🔎 Analisar espaço e retenção</button></div>'
     +'<div id="retentionPreview" aria-live="polite"></div>';
   updateNotifBtn();
+  showBackupRetentionWarning();
 }
 async function saveCfg(){
   try{
@@ -1431,21 +1432,72 @@ async function saveCfg(){
 }
 
 /* ============ BACKUP DA AGENDA ============ */
-const BKP_KEEP=14;            /* legado informativo: NÃO há exclusão automática de backups */
-let bkpDay='';
+const BKP_LIMITS=Object.freeze({auto:7,manual:3});
+let bkpDay='', dailyBackupBusy=false, manualBackupBusy=false, backupRetentionWarning='';
+// Chaves reconhecidas da versão atual e o formato diário legado (YYYY-MM-DD).
+// Qualquer chave diferente, inclusive _antes, fica protegida.
+const BKP_AUTO_RE=/^\d{4}-\d{2}-\d{2}(?:_auto-[0-9]{6}-[0-9]{3}-[a-z0-9]{1,6})?$/;
+const BKP_MANUAL_RE=/^\d{4}-\d{2}-\d{2}_manual-[0-9]{6}-[0-9]{3}-[a-z0-9]{1,6}$/;
+function backupKind(k){
+  if(typeof k!=='string'||retentionDayNumber(k.slice(0,10))===null)return 'protected';
+  return BKP_AUTO_RE.test(k)?'auto':BKP_MANUAL_RE.test(k)?'manual':'protected';
+}
+function backupExcess(keys,tag){
+  if(!Object.prototype.hasOwnProperty.call(BKP_LIMITS,tag))return [];
+  return [...new Set(keys.filter(k=>backupKind(k)===tag))].sort().reverse().slice(BKP_LIMITS[tag]);
+}
+// Firebase omite campos nulos e coleções vazias; também pode devolver arrays como objetos.
+function backupCanonical(v){
+  if(v==null)return null;
+  if(typeof v!=='object')return v;
+  const out=Object.create(null);
+  for(const k of Object.keys(v).sort()){
+    const child=backupCanonical(v[k]);if(child!==null)out[k]=child;
+  }
+  return Object.keys(out).length?out:null;
+}
+function backupMatches(a,b){return JSON.stringify(backupCanonical(a))===JSON.stringify(backupCanonical(b));}
+function showBackupRetentionWarning(){
+  const el=document.getElementById('bkpRetentionMsg');if(!el)return;
+  el.textContent=backupRetentionWarning;
+  el.className=backupRetentionWarning?'notice info':'';
+}
+async function pruneBackupsAfterConfirmed(tag,id,payload,version){
+  if(!Object.prototype.hasOwnProperty.call(BKP_LIMITS,tag)||backupKind(id)!==tag)return;
+  checkSession(version);if(!adminTok||!admOk)throw new Error('Sessão administrativa indisponível.');
+  const keys=await bkpKeys();checkSession(version);
+  if(keys===undefined||!keys.includes(id))throw new Error('Não foi possível conferir a lista de backups.');
+  const excess=backupExcess(keys,tag);
+  if(!excess.length)return;
+  // Em caso de relógio incorreto ou concorrência, nunca eliminar a cópia recém-confirmada.
+  if(excess.includes(id))throw new Error('A cópia nova não está entre as mais recentes; confira a data do aparelho.');
+  const stored=await dbGet('/backups/'+id);checkSession(version);
+  if(!stored||!backupMatches(stored,payload))throw new Error('Cópia nova não pôde ser conferida integralmente.');
+  const updates=Object.create(null);
+  for(const key of excess){
+    if(key===id||backupKind(key)!==tag)throw new Error('Chave de backup não autorizada.');
+    updates['backups/'+key]=null;
+  }
+  checkSession(version);if(!adminTok||!admOk)throw new Error('Sessão administrativa indisponível.');
+  await dbPatch(updates); // único PATCH, exclusivamente em /backups/<id>.
+  const after=await bkpKeys();checkSession(version);
+  if(after===undefined||!after.includes(id)||excess.some(k=>after.includes(k)))throw new Error('Não foi possível confirmar a retenção.');
+}
 const isoDate=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const bkpDateOf=k=>/^\d{4}-\d{2}-\d{2}/.test(k)?k.slice(0,10):null;
 const bkpKeyOk=k=>/^[0-9A-Za-z_-]+$/.test(k);
 function bkpLabel(k){
   const d=bkpDateOf(k);const dt=d?d.split('-').reverse().join('/'):k;
-  return dt+(k.includes('_manual')?' (manual)':k.includes('_antes')?' (antes de restaurar)':' (automático)');
+  return dt+(backupKind(k)==='manual'?' (manual)':backupKind(k)==='auto'?' (automático)':k.includes('_antes')?' (segurança — protegido)':' (legado — protegido)');
 }
 async function bkpKeys(){   /* lista só os nomes dos backups; undefined = erro de rede */
   try{if(!adminTok)return undefined;const v=await readDb('/backups',{},'shallow=true');return v?Object.keys(v).filter(bkpKeyOk):[];}
   catch(e){return undefined;}
 }
-async function makeBackup(tag){   /* tag: auto | manual | antes. Só COPIA; nunca altera a agenda */
-  if(!adminTok)return false; /* backup SÓ do admin: cliente lê só /slots (sem nome/telefone) e salvaria backup incompleto */
+async function makeBackup(tag){   /* Copia a agenda; retenção exclusiva de backups auto/manual. */
+  if(!adminTok||!admOk)return false;
+  const version=adminSessionVersion;
+  if(!['auto','manual','antes'].includes(tag))throw new Error('Tipo de backup inválido.'); /* backup SÓ do admin: cliente lê só /slots (sem nome/telefone) e salvaria backup incompleto */
   // Leia a coleção bruta para não ignorar silenciosamente registros antigos
   // cujo identificador não passe nos filtros usados pela interface.
   const rawBk=await dbGet('/bookings');if(rawBk===undefined)throw new Error('Não foi possível ler todos os agendamentos.');
@@ -1471,27 +1523,45 @@ async function makeBackup(tag){   /* tag: auto | manual | antes. Só COPIA; nunc
   const payload={format:'hercules-completo-v3',at:n.toISOString(),n:bk.length,bookings:bk,
     services:Array.isArray(sv)?sv:(sv?Object.values(sv):[]),slots:slotsAll||{},taken:takenAll||{},
     cfg:safeCfg,archive:archiveAll||{},lastWeek:lastWeekAll||{}};
+  checkSession(version);
   if(!(await dbCreateIfAbsent('/backups/'+id,payload)))throw new Error('O identificador do backup já existe.');
   // Verificação de leitura de volta: um backup só é considerado salvo quando confirmado.
   const chk=await dbGet('/backups/'+id+'/n');
+  checkSession(version);
   if(chk!==bk.length)throw new Error('Backup não foi confirmado.');
+  if(tag==='auto'||tag==='manual'){
+    try{
+      await pruneBackupsAfterConfirmed(tag,id,payload,version);
+      // Não ocultar aviso de retenção de outra categoria.
+      if(backupRetentionWarning.startsWith(tag==='auto'?'Automáticos:':'Manuais:'))backupRetentionWarning='';
+    }catch(e){
+      if(version===adminSessionVersion){
+        backupRetentionWarning=(tag==='auto'?'Automáticos:':'Manuais:')+' nova cópia salva, mas o limite de backups não pôde ser confirmado. '+(e?.message||'A limpeza será reavaliada na próxima cópia deste tipo.');
+        console.warn('Retenção de backups não confirmada:',e?.message||e);
+      }
+    }
+    if(version===adminSessionVersion)showBackupRetentionWarning();
+  }
   return true;
 }
 async function ensureDailyBackup(){   /* 1 backup automático por dia, feito pelo ADMIN. Cliente não cria backup: sem backup é melhor que backup sem nome/telefone */
   if(!adminTok)return;
-  const t=todayISO();if(bkpDay===t)return;
+  const t=todayISO();if(bkpDay===t||dailyBackupBusy)return;
+  const version=adminSessionVersion;dailyBackupBusy=true;
   try{
-    const keys=await bkpKeys();
+    const keys=await bkpKeys();checkSession(version);
     if(keys===undefined)return;
     const has=keys.some(k=>k===t||k.startsWith(t+'_auto-'));
     if(!has){
       if(!(await makeBackup('auto')))return; /* agenda vazia: reavaliar se entrar agendamento hoje */
     }
-    // Sem exclusão automática: os backups ficam no Firebase até revisão manual.
-    bkpDay=t;
-  }catch(e){}
+    checkSession(version);bkpDay=t;
+  }catch(e){console.warn('Backup diário não confirmado:',e?.message||e);}
+  finally{dailyBackupBusy=false;}
 }
 async function backupNow(){
+  if(manualBackupBusy||!admOk)return;
+  manualBackupBusy=true;
   const m=document.getElementById('bkpMsg');
   try{
     const ok=await makeBackup('manual');
@@ -1505,7 +1575,7 @@ async function backupNow(){
       aviso.textContent='Backup não salvo: '+(e?.message||'não foi possível confirmar a cópia.');
       m.replaceChildren(aviso);
     }
-  }
+  }finally{manualBackupBusy=false;}
 }
 async function listBackups(){
   const box=document.getElementById('bkpList');if(!box)return;
@@ -1521,7 +1591,8 @@ async function listBackups(){
       +'<div><b style="color:var(--gold)">'+esc(bkpLabel(k))+'</b><br><span style="color:var(--muted);font-size:13px">'+(typeof n==='number'?n:'?')+' agendamento(s)</span></div>'
       +'<button class="btn btn-outline" onclick="restoreBackup(\''+k+'\')">Recuperar ausentes</button></div>';
   }
-  box.innerHTML=html;
+  const counts={auto:keys.filter(k=>backupKind(k)==='auto').length,manual:keys.filter(k=>backupKind(k)==='manual').length};
+  box.innerHTML='<div class="notice info">Automáticos: '+counts.auto+'/7 · Manuais: '+counts.manual+'/3 · Protegidos: '+(keys.length-counts.auto-counts.manual)+'</div>'+html;
 }
 async function restoreBackup(k){
   if(!bkpKeyOk(k))return;
@@ -1603,8 +1674,8 @@ async function exportBackupJson(){
 /* ============ DIAGNÓSTICO CONSERVADOR DE RETENÇÃO ============
    Somente leitura. Nenhuma função deste bloco escreve, faz PATCH/PUT ou exclui dados.
    A lista de candidatos NÃO autoriza limpeza; exige backup externo comprovadamente restaurável.
-   O limite BKP_KEEP antigo NÃO executa retenção. */
-const RETENTION_REVIEW_POLICY={attendedDays:45,autoBackupMinimumAgeDays:90,dailyBackups:14,weeklyBackups:8,monthlyBackups:6};
+   A retenção de backups auto/manual é executada separadamente, após nova cópia confirmada. */
+const RETENTION_REVIEW_POLICY={attendedDays:45};
 function retentionDayNumber(iso){
   if(typeof iso!=='string'||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(iso))return null;
   const [y,m,d]=iso.split('-').map(Number);
@@ -1647,21 +1718,13 @@ function calculateRetentionPreview(data,dayISO){
     if(isOldCompleted(b))candidateTaken.push(key);
   }
   Object.values(books).forEach(b=>{if(b?.status==='cancelled')cancelled.push(b);});
-  const auto=backups.filter(k=>/^\d{4}-\d{2}-\d{2}_auto-/.test(k)&&retentionDayNumber(k.slice(0,10))!==null).sort().reverse();
-  const keep=new Set(auto.slice(0,p.dailyBackups));
-  const weeks=new Set(),months=new Set();
-  for(const k of auto){
-    const day=k.slice(0,10),wk=retentionWeekKey(day),mo=day.slice(0,7);
-    if(weeks.size<p.weeklyBackups&&!weeks.has(wk)){weeks.add(wk);keep.add(k);}
-    if(months.size<p.monthlyBackups&&!months.has(mo)){months.add(mo);keep.add(k);}
-  }
-  const candidateBackups=auto.filter(k=>!keep.has(k)&&now-retentionDayNumber(k.slice(0,10))>p.autoBackupMinimumAgeDays);
+  const candidateBackups=[...backupExcess(backups,'auto'),...backupExcess(backups,'manual')];
   const measuredSlotBytes=candidateSlots.reduce((s,id)=>s+retentionBytes(slots[id]),0);
   const measuredTakenBytes=candidateTaken.reduce((s,id)=>s+retentionBytes(taken[id]),0);
   return {
     totalBookings:Object.keys(books).length,cancelled:cancelled.length,archivedRecords:Object.keys(archive).length,
     totalSlots:Object.keys(slots).length,totalTaken:Object.keys(taken).length,
-    totalBackups:backups.length,manualOrBeforeBackups:backups.filter(k=>k.includes('_manual')||k.includes('_antes')).length,
+    totalBackups:backups.length,protectedBackups:backups.filter(k=>backupKind(k)==='protected').length,
     slotCandidates:candidateSlots.length,takenCandidates:candidateTaken.length,
     backupCandidates:candidateBackups.length,backupSampleKey:candidateBackups[0]||null,
     measuredSlotBytes,measuredTakenBytes,anomalies:anomalies.length,
@@ -1698,9 +1761,9 @@ async function previewRetentionReport(){
       +'<p style="margin-top:8px">Agendamentos preservados: <b>'+report.totalBookings+'</b> (cancelados: '+report.cancelled+'). Backups encontrados: <b>'+report.totalBackups+'</b>.</p>'
       +'<p style="margin-top:8px">Arquivos históricos preservados em /archive: <b>'+report.archivedRecords+'</b>.</p>'
       +'<p style="margin-top:8px">Possíveis registros temporários antigos de atendimentos confirmados: '+report.slotCandidates+' horários e '+report.takenCandidates+' travas; volume JSON aproximado: <b>'+pre+'</b>.</p>'
-      +'<p style="margin-top:8px">Backups automáticos antigos fora da seleção proposta: <b>'+report.backupCandidates+'</b>. Estimativa aproximada por amostra: <b>'+approx+'</b> (não é medição real do espaço cobrado).</p>'
-      +'<p style="margin-top:8px">Registros inconsistentes que exigem análise manual: <b>'+report.anomalies+'</b>. Backups manuais e de segurança: '+report.manualOrBeforeBackups+' (protegidos).</p>'
-      +'<p style="margin-top:8px"><b>Não apagar agora:</b> confirme primeiro um backup externo completo, testes de restauração, registros históricos e a política aprovada. Não há limpeza com o site fechado.</p>'
+      +'<p style="margin-top:8px">Backups automáticos/manuais acima dos limites (7/3): <b>'+report.backupCandidates+'</b>. Estimativa aproximada por amostra: <b>'+approx+'</b> (não é medição real do espaço cobrado).</p>'
+      +'<p style="margin-top:8px">Registros inconsistentes que exigem análise manual: <b>'+report.anomalies+'</b>. Backups de segurança e legados não classificados: '+report.protectedBackups+' (protegidos).</p>'
+      +'<p style="margin-top:8px"><b>Diagnóstico somente leitura:</b> não apaga agendamentos, horários, travas ou histórico. O limite de backups é aplicado separadamente quando uma nova cópia do mesmo tipo é confirmada. Não há limpeza com o site fechado.</p>'
       +'</div>';
   }catch(e){out.innerHTML='<div class="notice err">Não foi possível completar a leitura. Nenhuma exclusão ou alteração foi feita.</div>';}
   finally{retentionPreviewBusy=false;}
