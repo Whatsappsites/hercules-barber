@@ -238,6 +238,7 @@ td{padding:10px;border-bottom:1px solid #2e2e2e}
     </div>
 
     <div id="adminPanel" class="hidden">
+      <div id="bookingNotice" class="notice ok hidden" role="status"></div>
       <div class="tabs">
         <div class="tab active" data-tab="ag" onclick="showTab('ag',this)">Agendamentos</div>
         <div class="tab" data-tab="sv" onclick="showTab('sv',this)">Serviços e Preços</div>
@@ -478,6 +479,47 @@ function waClient(phone,msg){
   return 'https://wa.me/'+n+(msg?'?text='+encodeURIComponent(msg):'');
 }
 
+/* WhatsApp: apenas depois de o Firebase confirmar a alteração.
+   A mensagem é preparada localmente; o barbeiro precisa apertar Enviar. */
+function bookingDateBR(date){return String(date||'').split('-').reverse().join('/');}
+function bookingNoticeText(kind,old,next){
+  const header='💈 *HÉRCULES BARBER*\n\nOlá, '+old.name+'! ';
+  const service='\n\n✂️ Serviço: '+old.service;
+  if(kind==='cancel')return header+'Informamos que seu agendamento foi cancelado.'+service+
+    '\n📅 Data: '+bookingDateBR(old.date)+'\n🕒 Horário: '+old.time+
+    '\n\nPedimos desculpas pelo inconveniente. Você poderá realizar um novo agendamento pelo nosso site.\n\nhttps://whatsappsites.github.io/hercules-barber/#agendar\n\nAgradecemos pela compreensão!';
+  return header+'Seu agendamento foi remarcado.'+service+
+    '\n\nHorário anterior: '+bookingDateBR(old.date)+' às '+old.time+
+    '\n📅 Nova data: '+bookingDateBR(next.date)+'\n🕒 Novo horário: '+next.time+
+    '\n\nAgradecemos pela compreensão. Até breve!';
+}
+function clearBookingNotice(){
+  const area=document.getElementById('bookingNotice');if(area){area.replaceChildren();area.classList.add('hidden');}
+}
+function bookNoticeWindow(){
+  try{const w=window.open('about:blank','_blank');if(w)w.opener=null;return w;}catch(e){return null;}
+}
+function closeNoticeWindow(w){if(w)try{w.close();}catch(e){}}
+function showBookingNotice(kind,old,next,w,version){
+  if(version!==adminSessionVersion||!admOk){closeNoticeWindow(w);return;}
+  const area=document.getElementById('bookingNotice');
+  const digits=String(old.phone||'').replace(/\D/g,'');
+  const valid=/^(?:55)?[0-9]{10,11}$/.test(digits)&&(digits.length<=11||digits.startsWith('55'));
+  const url=valid?waClient(old.phone,bookingNoticeText(kind,old,next)):'#';
+  if(area){
+    area.replaceChildren();area.classList.remove('hidden');
+    const p=document.createElement('p');
+    p.textContent=(kind==='cancel'?'Agendamento cancelado.':'Agendamento remarcado.')+(url==='#'?' WhatsApp do cliente inválido.':' Avise o cliente pelo WhatsApp.');area.appendChild(p);
+    if(url!=='#'){
+      const a=document.createElement('a');a.className='btn btn-gold';a.style.cssText='padding:8px 14px;font-size:13px;margin:8px 8px 0 0';a.href=url;a.target='_blank';a.rel='noopener noreferrer';a.textContent='ABRIR MENSAGEM NO WHATSAPP';area.appendChild(a);
+    }
+    const close=document.createElement('button');close.className='btn btn-outline';close.style.cssText='padding:8px 14px;font-size:13px;margin-top:8px';close.textContent='Fechar';close.onclick=clearBookingNotice;area.appendChild(close);
+  }
+  if(url==='#'){closeNoticeWindow(w);return;}
+  if(w)try{w.location.href=url;}catch(e){closeNoticeWindow(w);}
+  // Se o navegador bloquear a aba, o botão permanece no painel, inclusive após polling.
+}
+
 /* ========== EXPEDIENTE ESPECIAL POR DATA ========== */
 /* Overrides são SOMENTE configurações públicas, nunca alteram /bookings, /slots ou /taken.
    mode=open permite abrir dia normalmente fechado ou trocar os períodos de um dia aberto.
@@ -618,19 +660,34 @@ function slotGridForDate(date,service,now=new Date()){
   const ranges=schedule.ranges;
   const dur=Number(service.dur);
   const busy=(bookings||[]).filter(b=>b&&b.date===date&&/^\d{2}:\d{2}$/.test(b.time||'')&&Number(b.dur)>0);
-  const step=dur%20===0?20:(dur%10===0?10:5);
+  // Cada intervalo livre tem sua própria origem. A grade anterior perdia
+  // encaixes ao manter a origem fixa no início do expediente.
   const today=date===isoDate(now),currentMin=now.getHours()*60+now.getMinutes();
-  const grid=[];
-  let blockUntil=-1;
-  for(const [a,b] of ranges){
-    for(let t=a;t+dur<=b;t+=step){
-      const hit=busy.some(x=>overlaps(t,t+dur,toMin(x.time),toMin(x.time)+Number(x.dur)));
-      const passed=today&&t<=currentMin;
-      const off=hit||t<blockUntil||passed;
-      if(!off)blockUntil=t+dur;
-      grid.push({t,off,hit});
-    }
+  const ceil5=t=>Math.ceil(t/5)*5;
+  const floor5=t=>Math.floor(t/5)*5;
+  // Usa os mesmos limites das travas de 5 minutos, inclusive serviços legados
+  // de duração não múltipla de cinco. Não altera nenhum agendamento existente.
+  const blocks=busy.map(x=>[floor5(toMin(x.time)),ceil5(toMin(x.time)+Number(x.dur))])
+    .filter(([a,b])=>Number.isFinite(a)&&Number.isFinite(b)&&b>a).sort((x,y)=>x[0]-y[0]);
+  const grid=[],seen=new Set();
+  function push(t,off,hit){if(!seen.has(t)){seen.add(t);grid.push({t,off,hit});}}
+  function free(a,b){
+    let t=ceil5(Math.max(a,today?currentMin+1:0));
+    // Horários compactos, sem estrelas, sem sobreposição e sem pausas artificiais.
+    for(;t+dur<=b;t=ceil5(t+dur))push(t,false,false);
   }
+  for(const [a,b] of ranges.slice().sort((x,y)=>x[0]-y[0])){
+    let cursor=a;
+    for(const [lo,hi] of blocks){
+      if(hi<=a||lo>=b)continue;
+      if(lo>cursor)free(cursor,Math.min(lo,b));
+      if(lo>=a&&lo<b&&(!today||lo>currentMin))push(lo,true,true);
+      cursor=Math.max(cursor,hi);
+      if(cursor>=b)break;
+    }
+    free(cursor,b);
+  }
+  grid.sort((a,b)=>a.t-b.t);
   return grid;
 }
 function fillDates(){
@@ -887,6 +944,7 @@ async function adminLogin(){
   renderAdmin();
 }
 function adminLogout(){
+  clearBookingNotice();
   // Ocultar o painel não basta: remover também nomes/telefones do DOM e memória.
   adminSessionVersion++;admOk=false;adminTok=null;adminRef=null;adminExp=0;authRefresh=null;
   bookings=[];agendaCarregada=false;bkSeen=null;lastWeekTotal=null;
@@ -1052,17 +1110,27 @@ async function doneBk(id){
     renderAdmin();
   }catch(e){alert('Não foi possível confirmar o atendimento: outra sessão pode ter alterado este agendamento. Atualize a agenda.');}
 }
+let noticeActionBusy=false;
 async function cancelBk(id){
+  if(noticeActionBusy||adminBookingEdit||!admOk)return;
   if(!confirm('Cancelar este agendamento?'))return;
+  noticeActionBusy=true;
+  const version=adminSessionVersion,w=bookNoticeWindow();
+  let cancelled=null,committed=false;
   try{
     if(!(await makeBackup('antes')))throw new Error('Backup não disponível; cancelamento interrompido.');
+    checkSession(version);
     const latest=await bkMap();
     if(!Object.values(latest).some(b=>String(b.id)===String(id))){alert('Este agendamento já não está na agenda. Nada foi excluído.');return;}
-    bookings=await bkApply(m=>{let found=false;for(const k in m)if(String(m[k].id)===String(id)){delete m[k];found=true;}if(!found)throw new Error('O agendamento já foi cancelado em outra sessão.');},'cancelado');
-    renderTabAg();renderPublic();renderSlots();
-    refreshBookings().catch(()=>{});
-    alert('Agendamento cancelado.');
-  }catch(e){alert('Cancelamento não concluído. Outra sessão pode ter alterado o agendamento. Atualize e confira antes de tentar novamente.');}
+    bookings=await bkApply(m=>{let found=false;for(const k in m)if(String(m[k].id)===String(id)){cancelled={...m[k]};delete m[k];found=true;}if(!found)throw new Error('O agendamento já foi cancelado em outra sessão.');},'cancelado');
+    committed=true;
+  }catch(e){alert('Cancelamento não confirmado. Atualize e confira a agenda antes de tentar novamente.');}
+  finally{noticeActionBusy=false;if(!committed)closeNoticeWindow(w);}
+  if(!committed)return;
+  if(version!==adminSessionVersion||!admOk){closeNoticeWindow(w);return;}
+  showBookingNotice('cancel',cancelled,null,w,version);
+  renderTabAg();renderPublic();renderSlots();
+  refreshBookings().catch(()=>{});
 }
 let rsB=null;
 function reschedule(id){
@@ -1080,6 +1148,7 @@ function rsCheck(){
   if(!rsB){warn.textContent='';return false;}
   const date=document.getElementById('rsDate').value,time=document.getElementById('rsTime').value;
   if(!date||!time){warn.textContent='Escolha a data e o horário.';return false;}
+  if(date<todayISO()){warn.textContent='Escolha uma data de hoje em diante.';return false;}
   const schedule=dailySchedule(date);
   if(!schedule.open){warn.textContent='⛔ Esta data está fechada ou sem expediente configurado.';return false;}
   const st=toMin(time);
@@ -1092,23 +1161,36 @@ function rsCheck(){
 }
 document.addEventListener('change',e=>{if((e.target.id==='rsDate'||e.target.id==='rsTime')&&rsB)rsCheck();});
 async function rsConfirm(){
-  if(!rsB)return;
+  if(!rsB||noticeActionBusy||adminBookingEdit||!admOk)return;
   if(!rsCheck())return;
   const nd=document.getElementById('rsDate').value,nt=document.getElementById('rsTime').value;
-  if(!confirm('Remarcar '+rsB.name+' para '+nd.split('-').reverse().join('/')+' às '+nt+'?'))return;
+  const original={...rsB};
+  if(nd===original.date&&nt===original.time){rsClose();return;}
+  if(!confirm('Remarcar '+original.name+' para '+bookingDateBR(nd)+' às '+nt+'?'))return;
+  noticeActionBusy=true;
+  const version=adminSessionVersion,w=bookNoticeWindow();
+  let before=null,after=null,committed=false;
   try{
-    const idr=rsB.id;
+    const idr=original.id;
     const cfgFresh=await dbGet('/cfg');
     if(cfgFresh===undefined||!dailySchedule(nd,cfgFresh||cfg).open)throw new Error('Data fechada ou agenda indisponível.');
+    checkSession(version);
     const rangeFresh=dailySchedule(nd,cfgFresh||cfg).ranges,stFresh=toMin(nt);
-    if(!rangeFresh.some(([a,z])=>stFresh>=a&&stFresh+Number(rsB.dur)<=z))throw new Error('Horário fora do expediente atual.');
     bookings=await bkApply(m=>{
-      const me=Object.values(m).find(x=>String(x.id)===String(idr)),a=toMin(nt);   /* confere de novo na agenda ATUAL do banco */
+      const me=Object.values(m).find(x=>String(x.id)===String(idr)),a=toMin(nt);
       if(!me)throw new Error('Agendamento não existe mais na agenda ativa. Nenhuma remarcação foi realizada.');
-      if(Object.values(m).some(x=>String(x.id)!==String(idr)&&x.date===nd&&overlaps(a,a+me.dur,toMin(x.time),toMin(x.time)+x.dur)))throw new Error('conflito');
-      for(const k in m)if(String(m[k].id)===String(idr)){m[k].date=nd;m[k].time=nt;}
-    });rsClose();renderAdmin();renderSlots();
-  }catch(e){if(e&&e.message==='conflito'){alert('Esse horário acabou de ser ocupado por outro cliente. Escolha outro.');return;}alert('Remarcação não concluída. Os dados podem ter sido alterados em outra sessão. Atualize a agenda e confira antes de tentar novamente.');}
+      if(me.date!==original.date||me.time!==original.time)throw new Error('Agendamento alterado em outra sessão.');
+      if(!rangeFresh.some(([lo,hi])=>stFresh>=lo&&stFresh+Number(me.dur)<=hi))throw new Error('Horário fora do expediente atual.');
+      if(Object.values(m).some(x=>String(x.id)!==String(idr)&&x.date===nd&&overlaps(a,a+Number(me.dur),toMin(x.time),toMin(x.time)+Number(x.dur))))throw new Error('conflito');
+      before={...me};me.date=nd;me.time=nt;after={...me};
+    });
+    committed=true;
+  }catch(e){if(e&&e.message==='conflito')alert('Esse horário acabou de ser ocupado por outro cliente. Escolha outro.');else alert('Remarcação não confirmada. Atualize a agenda e confira antes de tentar novamente.');}
+  finally{noticeActionBusy=false;if(!committed)closeNoticeWindow(w);}
+  if(!committed)return;
+  if(version!==adminSessionVersion||!admOk){closeNoticeWindow(w);return;}
+  rsClose();showBookingNotice('reschedule',before,after,w,version);renderAdmin();renderSlots();
+  refreshBookings().catch(()=>{});
 }
 let displayedServices=[],serviceBusy=false,serviceEpoch=0;
 function renderTabSv(){
