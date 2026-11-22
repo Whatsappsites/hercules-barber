@@ -268,52 +268,90 @@ const FB_API_KEY='AIzaSyBZmYWCEKkDSq8mZa1M2HuTnemH4hNOToc', ADMIN_EMAIL='Jv55241
 // O servidor autoriza somente a conta administrativa autenticada por e-mail e senha.
 let adminTok=null,adminRef=null,adminExp=0;
 let adminSessionVersion=0; // invalida leituras administrativas antigas após sair
-function setTok(j){adminTok=j.idToken||j.id_token;adminRef=j.refreshToken||j.refresh_token;adminExp=Date.now()+Number(j.expiresIn||j.expires_in)*1000;}
-async function authQ(){
+function setTok(j){adminTok=j.idToken||j.id_token;adminRef=j.refreshToken||j.refresh_token||adminRef;adminExp=Date.now()+Number(j.expiresIn||j.expires_in)*1000;}
+let authRefresh=null;
+class FirebaseError extends Error {
+  constructor(message,status=0,kind='unknown'){super(message);this.name='FirebaseError';this.status=status;this.kind=kind;}
+}
+function checkSession(version){if(version!==adminSessionVersion)throw new FirebaseError('A sessão mudou. Entre novamente antes de continuar.',0,'session');}
+async function authQ(force=false){
   if(!adminTok)return '';
-  if(Date.now()>adminExp-60000&&adminRef){
-    try{const x=await fetch('https://securetoken.googleapis.com/v1/token?key='+FB_API_KEY,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'grant_type=refresh_token&refresh_token='+encodeURIComponent(adminRef)});
-      const j=await x.json();if(j.id_token)setTok(j);}catch(e){}
+  const version=adminSessionVersion;
+  if(force||Date.now()>adminExp-60000){
+    if(!adminRef)throw new FirebaseError('Sessão expirada. Entre novamente com sua senha.',0,'session');
+    if(!authRefresh||authRefresh.version!==version){
+      const job={version,promise:null};
+      job.promise=(async()=>{
+        let x;try{x=await fetch('https://securetoken.googleapis.com/v1/token?key='+FB_API_KEY,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'grant_type=refresh_token&refresh_token='+encodeURIComponent(adminRef),cache:'no-store'});}catch(e){throw new FirebaseError('Não foi possível renovar a sessão agora. Tente novamente.',0,'network');}
+        const j=await x.json().catch(()=>null);
+        checkSession(version);
+        if(!x.ok||!j?.id_token){if(x.status>=500||x.status===429)throw new FirebaseError('Firebase temporariamente indisponível para renovar a sessão.',x.status,'temporary');throw new FirebaseError('Não foi possível renovar a sessão. Saia e entre novamente com sua senha.',x.status,'session');}
+        setTok(j);
+      })();authRefresh=job;
+    }
+    const job=authRefresh;try{await job.promise;}finally{if(authRefresh===job)authRefresh=null;}
   }
+  checkSession(version);
   return 'auth='+encodeURIComponent(adminTok);
 }
-const dbUrl=async p=>{const q=await authQ();return DB+p+'.json'+(q?'?'+q:'');};
+async function dbUrl(p){const version=adminSessionVersion,q=await authQ();checkSession(version);return DB+p+'.json'+(q?'?'+q:'');}
+function httpError(status,write=false){
+  if(status===401||status===403)return new FirebaseError('Firebase recusou '+(write?'a gravação':'a leitura')+' (HTTP '+status+'). Confira a sessão e as permissões.',status,'permission');
+  if(status===412)return new FirebaseError('Conflito: os dados foram modificados em outra sessão. Atualize e confira antes de salvar.',status,'conflict');
+  if(status===429||status>=500)return new FirebaseError('Firebase temporariamente indisponível (HTTP '+status+'). '+(write?'Confira se a alteração foi salva antes de repetir.':'Tente novamente.'),status,'temporary');
+  return new FirebaseError('Firebase retornou HTTP '+status+'. '+(write?'Confira a alteração antes de repetir.':'Tente novamente.'),status,'http');
+}
+async function dbRequest(path,options={},query=''){
+  const method=options.method||'GET',read=method==='GET',version=adminSessionVersion;
+  for(let attempt=0;attempt<(read?2:1);attempt++){
+    checkSession(version);
+    let url=await dbUrl(path);if(query)url+=(url.includes('?')?'&':'?')+query;
+    checkSession(version);
+    let r;try{r=await fetch(url,{...options,cache:'no-store'});}catch(e){
+      if(read&&attempt===0)continue;
+      throw new FirebaseError(read?'Não foi possível comunicar com o Firebase. Tente novamente.':'Não foi possível confirmar a gravação. Confira os dados antes de tentar novamente.',0,'network');
+    }
+    checkSession(version);
+    if(read&&attempt===0){
+      if(r.status===401&&adminTok){await authQ(true);continue;}
+      if(r.status===429||r.status>=500)continue;
+    }
+    return r;
+  }
+}
+async function readDb(path,options={},query=''){
+  const r=await dbRequest(path,options,query);if(!r.ok)throw httpError(r.status);
+  try{return await r.json();}catch(e){throw new FirebaseError('Firebase retornou uma resposta de leitura inválida. Tente novamente.',0,'response');}
+}
 // Campos públicos permitidos em /cfg; a leitura integral é exclusiva do administrador.
 const PUBLIC_CFG_FIELDS=['whatsapp','instagram','start','end','slotMin','days','hours','dateOverrides','address','maps','advanceDays','scheduleRev'];
 async function dbGet(path){
-  /* erro de rede/permissão => undefined | banco vazio => null */
-  if(path==='/cfg'&&!adminTok){
-    try{
-      const entries=await Promise.all(PUBLIC_CFG_FIELDS.map(async k=>{
-        const res=await fetch(await dbUrl('/cfg/'+k));
-        if(!res.ok)throw new Error('Leitura pública bloqueada: '+k);
-        return [k,await res.json()];
-      }));
-      const cfgPublic={};
-      entries.forEach(([k,v])=>{if(v!==null)cfgPublic[k]=v;});
+  // Mantém a distinção entre leitura que falhou (undefined) e banco vazio (null).
+  try{
+    if(path==='/cfg'&&!adminTok){
+      const entries=await Promise.all(PUBLIC_CFG_FIELDS.map(async k=>[k,await readDb('/cfg/'+k)]));
+      const cfgPublic={};entries.forEach(([k,v])=>{if(v!==null)cfgPublic[k]=v;});
       return Object.keys(cfgPublic).length?cfgPublic:null;
-    }catch(e){return undefined;}
-  }
-  try{const r=await fetch(await dbUrl(path));if(!r.ok)return undefined;return await r.json();}
-  catch(e){return undefined;}
+    }
+    return await readDb(path);
+  }catch(e){return undefined;}
 }
 /* admin lê /bookings (completo); cliente lê só /slots (data, hora, duração — sem nome/telefone) */
 async function getBk(){
-  const l=await dbGet(adminTok?'/bookings':'/slots');
-  if(l===undefined)throw new Error('offline');
+  const l=await readDb(adminTok?'/bookings':'/slots');
   if(Array.isArray(l))return l.filter(b=>b&&isSafeId(b.id)&&b.status!=='cancelled');
   if(!l)return [];
   return Object.entries(l).filter(([k,b])=>b&&isSafeId(k)&&isSafeId(b.id)&&b.status!=='cancelled').map(([,b])=>b); /* ignora registro com id fora do padrão: mesmo o que já está no banco não chega ao painel nem ao onclick */
 }
 async function dbPatch(val){
-  const r=await fetch(await dbUrl('/'),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(val)});
-  if(!r.ok)throw new Error('Falha ao salvar ('+r.status+')');
-  return r.json();
+  const r=await dbRequest('/',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(val)});
+  if(!r.ok)throw httpError(r.status,true);
+  return true; // HTTP de sucesso confirma a operação; não depende do corpo da resposta.
 }
 /* PUT condicional: insere somente se a chave ainda estiver vazia. Protege a migração
    contra sobrescrita de um agendamento criado entre a leitura e a gravação. */
 async function dbCreateIfAbsent(path,val){
-  const r=await fetch(await dbUrl(path),{method:'PUT',headers:{'Content-Type':'application/json','if-match':'null_etag'},body:JSON.stringify(val)});
+  const r=await dbRequest(path,{method:'PUT',headers:{'Content-Type':'application/json','if-match':'null_etag'},body:JSON.stringify(val)});
   if(r.status===412)return false;
   if(!r.ok)throw new Error('Falha ao proteger agendamento ('+r.status+')');
   return true;
@@ -382,28 +420,24 @@ async function bkApply(fn,reason='edicao'){
   return Object.values(next);
   }finally{adminBookingEdit=false;}
 }
-async function dbPut(path,val){
-  // Evita sobrescrever alterações recentes em serviços (REST CAS com ETag).
-  // A agenda nunca é substituída integralmente via PUT.
-  if(path!=='/services')throw new Error('Proteção: substituição integral bloqueada para '+path);
-  const url=await dbUrl(path);
-  const current=await fetch(url,{headers:{'X-Firebase-ETag':'true'}});
-  if(!current.ok)throw new Error('Não foi possível consultar a versão atual dos serviços.');
+const normalizeServices=v=>(Array.isArray(v)?v:Object.values(v||{})).filter(Boolean);
+async function dbPut(path,val,expected){
+  // Compara com a lista exibida ao barbeiro, não com uma variável alterada pelo polling.
+  if(path!=='/services'||!adminTok)throw new FirebaseError('Entre na Área do Barbeiro antes de alterar serviços.',0,'session');
+  const version=adminSessionVersion;
+  const current=await dbRequest(path,{headers:{'X-Firebase-ETag':'true'}});
+  if(!current.ok)throw httpError(current.status);
   const etag=current.headers.get('etag');
   const previous=await current.json();
-  if(!etag||JSON.stringify(previous||[])!==JSON.stringify(services))
-    throw new Error('Os serviços foram alterados por outra sessão. Atualize o painel antes de salvar.');
-  const r=await fetch(url,{method:'PUT',headers:{'Content-Type':'application/json','if-match':etag},body:JSON.stringify(val)});
-  if(r.status===412)throw new Error('Conflito: os serviços mudaram em outra sessão. Atualize o painel.');
-  if(!r.ok)throw new Error('Falha ao salvar serviços ('+r.status+').');
-  return r.json();
+  if(!etag)throw new FirebaseError('Firebase não forneceu o controle de versão dos serviços (ETag). Nenhuma alteração foi enviada.',0,'etag');
+  if(!sameData(normalizeServices(previous),expected))throw new FirebaseError('Os serviços mudaram desde que o painel foi aberto. Abra novamente a aba Serviços e Preços e confira antes de salvar.',0,'conflict');
+  checkSession(version);
+  const r=await dbRequest(path,{method:'PUT',headers:{'Content-Type':'application/json','if-match':etag},body:JSON.stringify(val)});
+  if(!r.ok)throw httpError(r.status,true);
+  return true;
 }
-async function getSv(){
-  const l=await dbGet('/services');
-  if(l===undefined)throw new Error('offline');
-  return Array.isArray(l)?l.filter(Boolean):(l?Object.values(l).filter(Boolean):[]);
-}
-function netErr(){alert('Sem conexão com a internet agora. Tente novamente em instantes.');}
+async function getSv(){return normalizeServices(await readDb('/services'));}
+function netErr(e){alert(e instanceof FirebaseError?e.message:'Não foi possível concluir a operação. Confira os dados antes de tentar novamente.');}
 
 // Firebase may return object keys in a different order; that alone is NOT a configuration change.
 function canonicalData(v){
@@ -495,15 +529,16 @@ function validateSpecialPeriods(v){
 /* Salva APENAS um dia com verificação condicional de ETag.
    Nunca grava a coleção de agendamentos nem reescreve cfg inteiro. */
 async function putSpecialDateConditional(date,value){
-  const url=await dbUrl('/cfg/dateOverrides/'+date);
-  const read=await fetch(url,{headers:{'X-Firebase-ETag':'true'}});
+  const version=adminSessionVersion,path='/cfg/dateOverrides/'+date;
+  const read=await dbRequest(path,{headers:{'X-Firebase-ETag':'true'}});
   if(!read.ok)throw new Error('Não foi possível verificar a configuração no Firebase.');
   const etag=read.headers.get('etag');
   if(!etag)throw new Error('Firebase não forneceu controle de versão; nada foi alterado.');
   const current=await read.json();
   const initial=dateOverrideFor(date);
-  if(JSON.stringify(current||null)!==JSON.stringify(initial||null))throw new Error('Esta data foi alterada em outra sessão. Atualize o site e tente novamente.');
-  const res=await fetch(url,{method:'PUT',headers:{'Content-Type':'application/json','if-match':etag},body:JSON.stringify(value)});
+  if(!sameData(current||null,initial||null))throw new Error('Esta data foi alterada em outra sessão. Atualize o site e tente novamente.');
+  checkSession(version);
+  const res=await dbRequest(path,{method:'PUT',headers:{'Content-Type':'application/json','if-match':etag},body:JSON.stringify(value)});
   if(res.status===412)throw new Error('Conflito: outra sessão alterou esta data. Atualize e confira antes de salvar.');
   if(!res.ok)throw new Error('Firebase recusou a alteração do dia ('+res.status+'). Nenhum agendamento foi excluído.');
 }
@@ -515,8 +550,7 @@ async function boot(){
   if(version!==adminSessionVersion)return;
   if(c===undefined||sv===undefined){agendaCarregada=false;renderPublic();renderSlots();return;}
   if(c){cfg=c;delete cfg.password;}
-  const sl=Array.isArray(sv)?sv:Object.values(sv||{});
-  if(sl.length)services=sl.filter(Boolean);
+  services=normalizeServices(sv);
   try{const loaded=await getBk();if(version!==adminSessionVersion)return;bookings=loaded;agendaCarregada=true;}catch(e){if(version!==adminSessionVersion)return;agendaCarregada=false;}
   renderPublic();renderSlots();
 }
@@ -691,8 +725,8 @@ async function submitBooking(){
   // Confirma configurações e preços antes do envio: mudanças de expediente podem
   // acontecer enquanto o cliente está com a página aberta.
   const currentCfg=await dbGet('/cfg'),currentSv=await dbGet('/services');
-  if(currentCfg===undefined||currentSv===undefined){savingBk=false;return fail('Sem conexão para conferir os horários. Não foi realizado agendamento.');}
-  const latestSv=Array.isArray(currentSv)?currentSv:Object.values(currentSv||{});
+  if(currentCfg===undefined||currentSv===undefined){savingBk=false;return fail('Não foi possível consultar o Firebase para conferir os horários. Nenhum agendamento foi enviado nesta tentativa.');}
+  const latestSv=normalizeServices(currentSv);
   const publicCfg=currentCfg?{...currentCfg}:null;
   if(publicCfg)delete publicCfg.password; // campo legado privado não altera o expediente
   if((publicCfg&&!sameData(publicCfg,cfg)) || !sameData(latestSv,services)){
@@ -703,7 +737,7 @@ async function submitBooking(){
   }
   /* busca a versão mais recente dos agendamentos antes de gravar */
   let list;
-  try{list=await getBk();}catch(e){savingBk=false;netErr();return;}
+  try{list=await getBk();}catch(e){savingBk=false;netErr(e);return;}
   const st=toMin(chosenTime);
   const dowBk=new Date(date+'T12:00:00').getDay();
   if(date===todayISO()){
@@ -819,7 +853,7 @@ async function adminLogin(){
       return;
     }
   }catch(err){
-    showLoginErr('Não foi possível conectar ao Firebase. Confira sua internet e tente novamente.');
+    showLoginErr('Não foi possível comunicar com o Firebase para entrar. Tente novamente.');
     return;
   }
   // Confere a conta do Firebase Authentication sem usar UID fixo de outro projeto.
@@ -854,7 +888,7 @@ async function adminLogin(){
 }
 function adminLogout(){
   // Ocultar o painel não basta: remover também nomes/telefones do DOM e memória.
-  adminSessionVersion++;admOk=false;adminTok=null;adminRef=null;adminExp=0;
+  adminSessionVersion++;admOk=false;adminTok=null;adminRef=null;adminExp=0;authRefresh=null;
   bookings=[];agendaCarregada=false;bkSeen=null;lastWeekTotal=null;
   document.getElementById('adminPanel').classList.add('hidden');
   ['ag','sv','hr','cfg'].forEach(t=>document.getElementById('tab-'+t).replaceChildren());
@@ -870,6 +904,7 @@ function adminLogout(){
 }
 function showTab(t,el){document.querySelectorAll('.tab[data-tab]').forEach(x=>x.classList.remove('active'));
   if(el)el.classList.add('active');
+  if(t==='sv'&&admOk&&!serviceBusy)renderTabSv();
   ['ag','sv','hr','cfg'].forEach(x=>document.getElementById('tab-'+x).classList.toggle('hidden',x!==t));}
 
 function renderAdmin(){renderTabAg();renderTabSv();renderTabHr();renderTabCfg();}
@@ -1075,7 +1110,9 @@ async function rsConfirm(){
     });rsClose();renderAdmin();renderSlots();
   }catch(e){if(e&&e.message==='conflito'){alert('Esse horário acabou de ser ocupado por outro cliente. Escolha outro.');return;}alert('Remarcação não concluída. Os dados podem ter sido alterados em outra sessão. Atualize a agenda e confira antes de tentar novamente.');}
 }
+let displayedServices=[],serviceBusy=false,serviceEpoch=0;
 function renderTabSv(){
+  displayedServices=JSON.parse(JSON.stringify(services));
   const box=document.getElementById('tab-sv');
   let rows=services.map(s=>'<tr><td>'+esc(s.name)+'</td><td>R$ '+Number(s.price).toFixed(2).replace('.',',')+'</td><td>'+s.dur+' min</td>'
     +'<td style="white-space:nowrap"><button class="btn btn-outline" style="padding:7px 12px;font-size:13px;margin-right:6px" onclick="editService('+Number(s.id)+')">Editar</button>'
@@ -1085,45 +1122,45 @@ function renderTabSv(){
     +'<div class="row-flex"><input id="svName" placeholder="Nome do serviço"><input id="svPrice" type="number" step="0.01" placeholder="Preço (R$)"><input id="svDur" type="number" placeholder="Duração (min)"></div>'
     +'<br><button class="btn btn-gold" onclick="addService()">ADICIONAR</button><div id="svErr"></div>';
 }
+async function changeServices(expected,novo){
+  if(serviceBusy)return false;
+  serviceBusy=true;
+  const version=adminSessionVersion;
+  try{
+    await dbPut('/services',novo,expected);
+    checkSession(version);
+    serviceEpoch++;services=novo;renderTabSv();renderPublic();renderSlots();
+    return true;
+  }catch(e){
+    if(version===adminSessionVersion&&e.kind==='conflict'){
+      try{const latest=await getSv();checkSession(version);services=latest;renderTabSv();renderPublic();renderSlots();}catch(_){}
+    }
+    netErr(e);return false;
+  }finally{serviceBusy=false;}
+}
 async function addService(){
+  if(serviceBusy)return;
   const n=document.getElementById('svName').value.trim(),p=parseFloat(document.getElementById('svPrice').value),d=parseInt(document.getElementById('svDur').value);
   const err=document.getElementById('svErr');
   if(!n||!Number.isFinite(p)||!(p>0)||!Number.isFinite(d)||d<5||d>240){err.innerHTML='<div class="notice err" style="margin-top:12px">Preencha nome, preço e duração válidos.</div>';return;}
-  try{
-    const fresh=await getSv();
-    const novo=[...fresh,{id:Date.now(),name:n,price:p,dur:d}];
-    await dbPut('/services',novo);
-    services=novo;
-    renderTabSv();renderPublic();
-    err.innerHTML='<div class="notice ok" style="margin-top:12px">Serviço adicionado!</div>';
-  }catch(e){netErr();}
+  const expected=JSON.parse(JSON.stringify(displayedServices));
+  let id=Date.now();while(expected.some(x=>String(x.id)===String(id)))id++;
+  if(await changeServices(expected,[...expected,{id,name:n,price:p,dur:d}]))document.getElementById('svErr').innerHTML='<div class="notice ok" style="margin-top:12px">Serviço adicionado!</div>';
 }
 async function editService(id){
-  const s=services.find(x=>x.id==id);if(!s)return;
-  const np=prompt('Novo preço de "'+s.name+'" (R$):',s.price);
-  if(np===null)return;
-  const nd=prompt('Nova duração de "'+s.name+'" em minutos:',s.dur);
-  if(nd===null)return;
-  const p=parseFloat(np),d=parseInt(nd);
+  if(serviceBusy)return;
+  const expected=JSON.parse(JSON.stringify(displayedServices));
+  const s=expected.find(x=>x.id==id);if(!s)return;
+  const np=prompt('Novo preço de "'+s.name+'" (R$):',s.price);if(np===null)return;
+  const nd=prompt('Nova duração de "'+s.name+'" em minutos:',s.dur);if(nd===null)return;
+  const p=parseFloat(String(np).replace(',','.')),d=parseInt(nd);
   if(!Number.isFinite(p)||!(p>0)||!Number.isFinite(d)||d<5||d>240){alert('Preço válido e duração entre 5 e 240 minutos.');return;}
-  try{
-    const fresh=await getSv();
-    const novo=fresh.map(x=>x.id===id?{...x,price:p,dur:d}:x);
-    await dbPut('/services',novo);
-    services=novo;
-    renderTabSv();renderPublic();renderSlots();
-    alert('Serviço atualizado! Novos agendamentos já usam o novo tempo.');
-  }catch(e){netErr();}
+  if(await changeServices(expected,expected.map(x=>x.id==id?{...x,price:p,dur:d}:x)))alert('Serviço atualizado! Novos agendamentos já usam o novo tempo.');
 }
 async function delService(id){
-  if(!confirm('Excluir este serviço?'))return;
-  try{
-    const fresh=await getSv();
-    const novo=fresh.filter(s=>s.id!==id);
-    await dbPut('/services',novo);
-    services=novo;
-    renderTabSv();renderPublic();renderSlots();
-  }catch(e){netErr();}
+  if(serviceBusy||!confirm('Excluir este serviço?'))return;
+  const expected=JSON.parse(JSON.stringify(displayedServices));
+  await changeServices(expected,expected.filter(s=>s.id!=id));
 }
 
 function renderTabHr(){
@@ -1252,7 +1289,7 @@ async function saveHours(){
     // Não feche dias nem encurte horários que já tenham reservas ativas.
     const freshCfg=await dbGet('/cfg');if(freshCfg===undefined)throw new Error('Falha ao conferir o expediente atual. Nenhuma alteração foi feita.');
     const currentDays=(freshCfg||{}).days,currentHours=(freshCfg||{}).hours;
-    if(JSON.stringify(currentDays)!==JSON.stringify(cfg.days)||JSON.stringify(currentHours)!==JSON.stringify(cfg.hours))throw new Error('Horários foram modificados em outra sessão. Atualize o site antes de salvar.');
+    if(!sameData(currentDays,cfg.days)||!sameData(currentHours,cfg.hours))throw new Error('Horários foram modificados em outra sessão. Atualize o site antes de salvar.');
     const active=await getAllActiveBookingRecords();
     const proposed={...(freshCfg||cfg),days,hours:H};
     const conflicting=active.filter(b=>b.date>=todayISO()&&!bookingFitsSchedule(b,proposed));
@@ -1296,7 +1333,7 @@ function renderTabCfg(){
 }
 async function saveCfg(){
   try{
-    const fc=await dbGet('/cfg');if(fc===undefined)throw new Error('offline');
+    const fc=await readDb('/cfg');
     const fresh=fc||cfg;delete fresh.password; /* versão mais recente do banco */
     fresh.whatsapp=document.getElementById('cfgWa').value.replace(/\D/g,'');
     fresh.instagram=document.getElementById('cfgIg').value.trim();
@@ -1305,7 +1342,7 @@ async function saveCfg(){
     cfg={...cfg,whatsapp:fresh.whatsapp,instagram:fresh.instagram,address:fresh.address};
     renderPublic();
     document.getElementById('cfgMsg').innerHTML='<div class="notice ok" style="margin-top:12px">Configurações salvas! Já visíveis para todos os clientes.</div>';
-  }catch(e){netErr();}
+  }catch(e){netErr(e);}
 }
 
 /* ============ BACKUP DA AGENDA ============ */
@@ -1319,7 +1356,7 @@ function bkpLabel(k){
   return dt+(k.includes('_manual')?' (manual)':k.includes('_antes')?' (antes de restaurar)':' (automático)');
 }
 async function bkpKeys(){   /* lista só os nomes dos backups; undefined = erro de rede */
-  try{const r=await fetch(DB+'/backups.json?shallow=true&'+(await authQ()));if(!r.ok)return undefined;const v=await r.json();return v?Object.keys(v).filter(bkpKeyOk):[];}
+  try{if(!adminTok)return undefined;const v=await readDb('/backups',{},'shallow=true');return v?Object.keys(v).filter(bkpKeyOk):[];}
   catch(e){return undefined;}
 }
 async function makeBackup(tag){   /* tag: auto | manual | antes. Só COPIA; nunca altera a agenda */
@@ -1607,13 +1644,14 @@ async function refreshBookings(){
     const bk0=await getBk();
     if(version!==adminSessionVersion)return;
     agendaCarregada=true;
+    const epoch=serviceEpoch;
     const cc=await dbGet('/cfg'),ss=await dbGet('/services');
     if(version!==adminSessionVersion)return;
     if(cc===undefined||ss===undefined)throw new Error('Configurações indisponíveis');
     let changed=false;
     const safeCfg=cc?{...cc}:null;if(safeCfg)delete safeCfg.password;
     if(safeCfg&&!sameData(safeCfg,cfg)){cfg=safeCfg;changed=true;}
-    if(ss){const next=Array.isArray(ss)?ss:Object.values(ss);if(!sameData(next,services)){services=next;changed=true;}}
+    if(!serviceBusy&&epoch===serviceEpoch){const next=normalizeServices(ss);if(!sameData(next,services)){services=next;changed=true;}}
     bookings=bk0; // verifica disponibilidade usando a leitura mais recente
     if(changed)renderPublic();else fillDates();
     if(changed&&admOk)renderSpecialDateList();
