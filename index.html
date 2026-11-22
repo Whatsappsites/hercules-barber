@@ -215,6 +215,7 @@ td{padding:10px;border-bottom:1px solid #2e2e2e}
       <div id="footHoursFull" class="footer-hours-full"></div>
     </details>
     <p id="footAddr" class="footer-address" style="display:none"></p>
+    <a id="footMap" class="btn btn-outline" style="margin-top:14px;padding:10px 22px;font-size:14px" target="_blank" rel="noopener" href="https://maps.app.goo.gl/isfQtbfU3AXQ42oN8">📍 Como chegar</a>
     <p style="margin-top:18px">© 2026 Hércules Barber — Todos os direitos reservados.</p>
   </div>
 </footer>
@@ -613,6 +614,8 @@ function renderPublic(){
   document.getElementById('footIg').href=cfg.instagram||'#';
   const ad=String(cfg.address||'').trim(),fa=document.getElementById('footAddr');
   fa.innerHTML=ad?'📍 '+esc(ad):'';fa.style.display=ad?'block':'none';
+  const mapUrl=String(cfg.maps||'').trim();
+  document.getElementById('footMap').href=/^https:\/\//i.test(mapUrl)?mapUrl:'https://maps.app.goo.gl/isfQtbfU3AXQ42oN8';
   // Rodapé compacto: resumo dos dias abertos e detalhes opcionais, sem Google Maps.
   // Esta rotina só escreve na interface; não altera dados do Firebase.
   const diasAbertos=(Array.isArray(cfg.days)?cfg.days:[]).flatMap((aberto,i)=>aberto?[i]:[]);
